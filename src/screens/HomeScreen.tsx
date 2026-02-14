@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -10,6 +11,7 @@ import {
 } from '@/src/services';
 
 export function HomeScreen() {
+  const router = useRouter();
   const [state, setState] = useState<EmergencyControllerState>(
     emergencyControllerService.getState()
   );
@@ -88,11 +90,9 @@ export function HomeScreen() {
           <Text style={styles.title}>Dextrex Control Center</Text>
           <Text style={styles.subtitle}>Monitoring for crash events.</Text>
           <Text style={styles.stateText}>State: {state}</Text>
-          <Text style={styles.stateText}>Detector Phase: {detectorPhase}</Text>
-          <Text style={styles.phaseMetaText}>
-            Last Phase Event: {lastPhaseReason ?? 'None'}{' '}
-            {lastPhaseChangedAt ? `@ ${new Date(lastPhaseChangedAt).toLocaleTimeString()}` : ''}
-          </Text>
+          <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
+            <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
+          </Pressable>
         </>
       )}
     </View>
@@ -132,11 +132,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  phaseMetaText: {
-    color: '#93C5FD',
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
+  contactsButton: {
+    marginTop: 8,
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  contactsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   mainText: {
     color: '#FFFFFF',
