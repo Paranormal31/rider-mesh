@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { emergencyControllerService, type EmergencyControllerState } from '@/src/services';
+import {
+  crashDetectionService,
+  emergencyControllerService,
+  type CrashDetectionPhase,
+  type EmergencyControllerState,
+  type PhaseChangeReason,
+} from '@/src/services';
 
 export function HomeScreen() {
   const [state, setState] = useState<EmergencyControllerState>(
     emergencyControllerService.getState()
   );
+  const [detectorPhase, setDetectorPhase] = useState<CrashDetectionPhase>(
+    crashDetectionService.getPhase()
+  );
   const [remainingSeconds, setRemainingSeconds] = useState(
     emergencyControllerService.getCountdownRemainingSeconds()
   );
+  const [lastPhaseReason, setLastPhaseReason] = useState<PhaseChangeReason | null>(null);
+  const [lastPhaseChangedAt, setLastPhaseChangedAt] = useState<number | null>(null);
 
   useEffect(() => {
     const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
@@ -28,9 +39,17 @@ export function HomeScreen() {
       setState('MONITORING');
       setRemainingSeconds(0);
     });
+    const offPhase = crashDetectionService.on('DETECTION_PHASE_CHANGED', (event) => {
+      setDetectorPhase(event.toPhase);
+      setLastPhaseReason(event.reason ?? null);
+      setLastPhaseChangedAt(event.timestamp);
+    });
 
     emergencyControllerService.start().then(
-      () => setState(emergencyControllerService.getState()),
+      () => {
+        setState(emergencyControllerService.getState());
+        setDetectorPhase(crashDetectionService.getPhase());
+      },
       () => setState('MONITORING')
     );
 
@@ -39,6 +58,7 @@ export function HomeScreen() {
       offTick();
       offAlert();
       offCancelled();
+      offPhase();
       emergencyControllerService.stop();
     };
   }, []);
@@ -68,6 +88,11 @@ export function HomeScreen() {
           <Text style={styles.title}>Dextrex Control Center</Text>
           <Text style={styles.subtitle}>Monitoring for crash events.</Text>
           <Text style={styles.stateText}>State: {state}</Text>
+          <Text style={styles.stateText}>Detector Phase: {detectorPhase}</Text>
+          <Text style={styles.phaseMetaText}>
+            Last Phase Event: {lastPhaseReason ?? 'None'}{' '}
+            {lastPhaseChangedAt ? `@ ${new Date(lastPhaseChangedAt).toLocaleTimeString()}` : ''}
+          </Text>
         </>
       )}
     </View>
@@ -106,6 +131,12 @@ const styles = StyleSheet.create({
     color: '#E5E7EB',
     fontSize: 14,
     fontWeight: '600',
+  },
+  phaseMetaText: {
+    color: '#93C5FD',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   mainText: {
     color: '#FFFFFF',
