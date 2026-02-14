@@ -1,45 +1,73 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ServiceStatusCard } from '@/src/components/ServiceStatusCard';
-import { crashDetectionService } from '@/src/services';
-import { getInitialServiceStatuses } from '@/src/utils/getInitialServiceStatuses';
+import { emergencyControllerService, type EmergencyControllerState } from '@/src/services';
 
 export function HomeScreen() {
-  const statuses = getInitialServiceStatuses();
-  const [crashDetected, setCrashDetected] = useState(false);
+  const [state, setState] = useState<EmergencyControllerState>(
+    emergencyControllerService.getState()
+  );
+  const [remainingSeconds, setRemainingSeconds] = useState(
+    emergencyControllerService.getCountdownRemainingSeconds()
+  );
 
   useEffect(() => {
-    const unsubscribe = crashDetectionService.on('CRASH_DETECTED', () => {
-      setCrashDetected(true);
+    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
+      setState('COUNTDOWN_ACTIVE');
+      setRemainingSeconds(event.remainingSeconds);
+    });
+    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', (event) => {
+      setState('COUNTDOWN_ACTIVE');
+      setRemainingSeconds(event.remainingSeconds);
+    });
+    const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
+      setState(emergencyControllerService.getState());
+      setRemainingSeconds(0);
+    });
+    const offCancelled = emergencyControllerService.on('CANCELLED', () => {
+      setState('MONITORING');
+      setRemainingSeconds(0);
     });
 
-    crashDetectionService.start().catch(() => {
-      // Temporary verification mode: ignore startup errors in UI state.
-    });
+    emergencyControllerService.start().then(
+      () => setState(emergencyControllerService.getState()),
+      () => setState('MONITORING')
+    );
 
     return () => {
-      unsubscribe();
-      crashDetectionService.stop();
+      offStarted();
+      offTick();
+      offAlert();
+      offCancelled();
+      emergencyControllerService.stop();
     };
   }, []);
 
+  const isCountdownActive = state === 'COUNTDOWN_ACTIVE';
+  const isAlertTriggered = state === 'ALERT_SENDING' || state === 'ALERT_SENT';
+
   return (
-    <View style={[styles.container, crashDetected && styles.crashContainer]}>
-      {crashDetected ? (
-        <Text style={styles.crashText}>CRASH DETECTED</Text>
+    <View
+      style={[
+        styles.container,
+        isCountdownActive && styles.countdownContainer,
+        isAlertTriggered && styles.alertContainer,
+      ]}>
+      {isCountdownActive ? (
+        <>
+          <Text style={styles.mainText}>CRASH DETECTED</Text>
+          <Text style={styles.countdownText}>{remainingSeconds}</Text>
+          <Pressable style={styles.cancelButton} onPress={() => emergencyControllerService.cancel()}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+        </>
+      ) : isAlertTriggered ? (
+        <Text style={styles.mainText}>ALERT TRIGGERED</Text>
       ) : (
         <>
           <Text style={styles.title}>Dextrex Control Center</Text>
-          <Text style={styles.subtitle}>
-            UI is separated from service logic and ready for feature growth.
-          </Text>
-
-          <View style={styles.section}>
-            {statuses.map((service) => (
-              <ServiceStatusCard key={service.name} service={service} />
-            ))}
-          </View>
+          <Text style={styles.subtitle}>Monitoring for crash events.</Text>
+          <Text style={styles.stateText}>State: {state}</Text>
         </>
       )}
     </View>
@@ -53,29 +81,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 28,
     gap: 18,
-  },
-  crashContainer: {
-    backgroundColor: '#B91C1C',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  countdownContainer: {
+    backgroundColor: '#B91C1C',
+  },
+  alertContainer: {
+    backgroundColor: '#7F1D1D',
+  },
   title: {
     color: '#FFFFFF',
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: '800',
+    textAlign: 'center',
   },
   subtitle: {
     color: '#9CA3AF',
-    fontSize: 15,
+    fontSize: 16,
     lineHeight: 22,
+    textAlign: 'center',
   },
-  section: {
-    gap: 12,
+  stateText: {
+    color: '#E5E7EB',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  crashText: {
+  mainText: {
     color: '#FFFFFF',
     fontSize: 44,
     fontWeight: '900',
     letterSpacing: 1,
+    textAlign: 'center',
+  },
+  countdownText: {
+    color: '#FEE2E2',
+    fontSize: 72,
+    fontWeight: '900',
+    lineHeight: 78,
+  },
+  cancelButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+  },
+  cancelButtonText: {
+    color: '#7F1D1D',
+    fontSize: 18,
+    fontWeight: '800',
   },
 });
