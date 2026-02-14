@@ -77,6 +77,7 @@ class CrashDetectionService {
   private running = false;
   private subscription: SensorSubscription | null = null;
   private lockUntilMs = 0;
+  private lastCrashTimestampMs: number | null = null;
   private phase: CrashDetectionPhase = 'IDLE';
   private spikeTimestampMs: number | null = null;
   private spikeOrientation: SpikeOrientation | null = null;
@@ -273,6 +274,7 @@ class CrashDetectionService {
       if (nowMs - this.stillnessStartedAtMs >= this.config.stillnessWindowMs) {
         this.lockUntilMs = nowMs + this.config.cooldownMs;
         this.hasReportedCooldownLock = false;
+        this.lastCrashTimestampMs = nowMs;
         this.emit('CRASH_DETECTED', {
           type: 'CRASH_DETECTED',
           timestamp: nowMs,
