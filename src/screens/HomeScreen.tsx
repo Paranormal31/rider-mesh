@@ -90,6 +90,11 @@ export function HomeScreen() {
           <Text style={styles.title}>Dextrex Control Center</Text>
           <Text style={styles.subtitle}>Monitoring for crash events.</Text>
           <Text style={styles.stateText}>State: {state}</Text>
+          <Text style={styles.stateText}>Detector Phase: {detectorPhase}</Text>
+          <Text style={styles.phaseMetaText}>
+            Last Phase Event: {lastPhaseReason ?? 'None'}{' '}
+            {lastPhaseChangedAt ? `@ ${new Date(lastPhaseChangedAt).toLocaleTimeString()}` : ''}
+          </Text>
           <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
             <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
           </Pressable>
@@ -131,6 +136,12 @@ const styles = StyleSheet.create({
     color: '#E5E7EB',
     fontSize: 14,
     fontWeight: '600',
+  },
+  phaseMetaText: {
+    color: '#93C5FD',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   contactsButton: {
     marginTop: 8,
