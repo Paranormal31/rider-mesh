@@ -1,4 +1,5 @@
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
+import { locationService, type LocationPoint } from './locationService';
 import type { ServiceHealth } from './types';
 
 type EmergencyControllerState =
@@ -23,6 +24,10 @@ type CountdownTickEvent = {
 type AlertTriggeredEvent = {
   type: 'ALERT_TRIGGERED';
   triggeredAt: number;
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+  breadcrumbTrail: LocationPoint[];
 };
 
 type CancelledEvent = {
@@ -42,6 +47,7 @@ type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMa
 ) => void;
 
 const DEFAULT_COUNTDOWN_SECONDS = 10;
+const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
 
 class EmergencyControllerService {
   private state: EmergencyControllerState = 'MONITORING';
@@ -50,6 +56,7 @@ class EmergencyControllerService {
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private crashUnsubscribe: (() => void) | null = null;
   private running = false;
+  private reentryLockedUntilMs = 0;
   private listeners: {
     [K in keyof EmergencyControllerEventMap]: Set<EmergencyControllerListener<K>>;
   } = {
@@ -65,6 +72,7 @@ class EmergencyControllerService {
     }
 
     await crashDetectionService.start();
+    await locationService.startTracking();
     this.crashUnsubscribe = crashDetectionService.on('CRASH_DETECTED', (event) =>
       this.handleCrashDetected(event)
     );
@@ -80,7 +88,9 @@ class EmergencyControllerService {
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.reentryLockedUntilMs = 0;
     crashDetectionService.stop();
+    locationService.stopTracking();
   }
 
   on<TEvent extends keyof EmergencyControllerEventMap>(
@@ -126,7 +136,16 @@ class EmergencyControllerService {
   }
 
   private handleCrashDetected(_: CrashDetectedEvent): void {
-    if (!this.running || this.state === 'COUNTDOWN_ACTIVE') {
+    if (!this.running) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    if (nowMs < this.reentryLockedUntilMs) {
+      return;
+    }
+
+    if (this.state !== 'MONITORING') {
       return;
     }
 
@@ -158,18 +177,57 @@ class EmergencyControllerService {
       }
 
       this.clearCountdownTimer();
-      this.triggerAlert();
+      void this.triggerAlert();
     }, 1000);
   }
 
-  private triggerAlert(): void {
+  private async triggerAlert(): Promise<void> {
     const now = Date.now();
     this.state = 'ALERT_SENDING';
+    const payload = await this.buildAlertLocationPayload(now);
     this.emit('ALERT_TRIGGERED', {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
+      ...payload,
     });
     this.state = 'ALERT_SENT';
+    this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
+  }
+
+  private async buildAlertLocationPayload(triggeredAt: number): Promise<{
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+    breadcrumbTrail: LocationPoint[];
+  }> {
+    const breadcrumbTrail = locationService.getBreadcrumbTrail(10);
+    const lastBreadcrumb = breadcrumbTrail[breadcrumbTrail.length - 1];
+
+    try {
+      const currentLocation = await locationService.getCurrentLocation();
+      return {
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        timestamp: currentLocation.timestamp,
+        breadcrumbTrail,
+      };
+    } catch {
+      if (lastBreadcrumb) {
+        return {
+          latitude: lastBreadcrumb.latitude,
+          longitude: lastBreadcrumb.longitude,
+          timestamp: lastBreadcrumb.timestamp,
+          breadcrumbTrail,
+        };
+      }
+
+      return {
+        latitude: 0,
+        longitude: 0,
+        timestamp: triggeredAt,
+        breadcrumbTrail,
+      };
+    }
   }
 
   private clearCountdownTimer(): void {
