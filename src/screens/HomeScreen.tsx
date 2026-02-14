@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { emergencyControllerService, type EmergencyControllerState } from '@/src/services';
 
 export function HomeScreen() {
+  const router = useRouter();
   const [state, setState] = useState<EmergencyControllerState>(
     emergencyControllerService.getState()
   );
@@ -68,6 +70,9 @@ export function HomeScreen() {
           <Text style={styles.title}>Dextrex Control Center</Text>
           <Text style={styles.subtitle}>Monitoring for crash events.</Text>
           <Text style={styles.stateText}>State: {state}</Text>
+          <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
+            <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
+          </Pressable>
         </>
       )}
     </View>
@@ -106,6 +111,18 @@ const styles = StyleSheet.create({
     color: '#E5E7EB',
     fontSize: 14,
     fontWeight: '600',
+  },
+  contactsButton: {
+    marginTop: 8,
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  contactsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   mainText: {
     color: '#FFFFFF',
