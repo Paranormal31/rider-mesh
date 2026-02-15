@@ -24,10 +24,12 @@ type CountdownTickEvent = {
 type AlertTriggeredEvent = {
   type: 'ALERT_TRIGGERED';
   triggeredAt: number;
-  latitude: number;
-  longitude: number;
-  timestamp: number;
-  breadcrumbTrail: LocationPoint[];
+  location: {
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+    breadcrumbTrail: LocationPoint[];
+  } | null;
 };
 
 type CancelledEvent = {
@@ -72,7 +74,9 @@ class EmergencyControllerService {
     }
 
     await crashDetectionService.start();
-    await locationService.startTracking();
+    void locationService.startTracking().catch(() => {
+      // Location is optional. Crash flow must continue even when permission is denied.
+    });
     this.crashUnsubscribe = crashDetectionService.on('CRASH_DETECTED', (event) =>
       this.handleCrashDetected(event)
     );
@@ -184,24 +188,23 @@ class EmergencyControllerService {
   private async triggerAlert(): Promise<void> {
     const now = Date.now();
     this.state = 'ALERT_SENDING';
-    const payload = await this.buildAlertLocationPayload(now);
+    const location = await this.buildAlertLocationPayload();
     this.emit('ALERT_TRIGGERED', {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
-      ...payload,
+      location,
     });
     this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
   }
 
-  private async buildAlertLocationPayload(triggeredAt: number): Promise<{
+  private async buildAlertLocationPayload(): Promise<{
     latitude: number;
     longitude: number;
     timestamp: number;
     breadcrumbTrail: LocationPoint[];
-  }> {
+  } | null> {
     const breadcrumbTrail = locationService.getBreadcrumbTrail(10);
-    const lastBreadcrumb = breadcrumbTrail[breadcrumbTrail.length - 1];
 
     try {
       const currentLocation = await locationService.getCurrentLocation();
@@ -212,21 +215,7 @@ class EmergencyControllerService {
         breadcrumbTrail,
       };
     } catch {
-      if (lastBreadcrumb) {
-        return {
-          latitude: lastBreadcrumb.latitude,
-          longitude: lastBreadcrumb.longitude,
-          timestamp: lastBreadcrumb.timestamp,
-          breadcrumbTrail,
-        };
-      }
-
-      return {
-        latitude: 0,
-        longitude: 0,
-        timestamp: triggeredAt,
-        breadcrumbTrail,
-      };
+      return null;
     }
   }
 

@@ -12,6 +12,7 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="index" options={{ title: 'Home' }} />
+        <Stack.Screen name="emergency-contacts" options={{ title: 'Emergency Contacts' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
