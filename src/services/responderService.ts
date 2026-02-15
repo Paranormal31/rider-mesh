@@ -1,6 +1,7 @@
 import { alertAcceptApiUrl } from '@/src/config/api';
 
 import { deviceIdentityService } from './deviceIdentityService';
+import { profileService } from './profileService';
 import {
   socketService,
   type AlertAssignedEvent,
@@ -72,7 +73,11 @@ class ResponderService {
 
   async acceptAlert(alertId: string): Promise<{ ok: boolean; reason?: string }> {
     try {
-      const responderDeviceId = await deviceIdentityService.getDeviceId();
+      const [responderDeviceId, profile] = await Promise.all([
+        deviceIdentityService.getDeviceId(),
+        profileService.getProfile(),
+      ]);
+      const responderName = profile?.name?.trim() ? profile.name.trim() : null;
       const response = await fetch(alertAcceptApiUrl(alertId), {
         method: 'POST',
         headers: {
@@ -80,6 +85,7 @@ class ResponderService {
         },
         body: JSON.stringify({
           responderDeviceId,
+          responderName,
         }),
       });
 

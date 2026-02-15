@@ -22,6 +22,7 @@ export interface AlertLocation extends AlertBreadcrumbPoint {
 
 export interface CreateAlertRequest {
   deviceId: string;
+  victimName?: string | null;
   status: AlertStatus;
   triggeredAt: number;
   location?: AlertLocation | null;
@@ -29,6 +30,7 @@ export interface CreateAlertRequest {
 
 export interface CreateAlertPersistenceInput {
   deviceId: string;
+  victimName?: string | null;
   status: AlertStatus;
   triggeredAt: number;
   location: AlertLocation | null;
@@ -37,16 +39,19 @@ export interface CreateAlertPersistenceInput {
 export interface AcceptAlertPersistenceInput {
   alertId: string;
   responderDeviceId: string;
+  responderName?: string | null;
   assignedAt: number;
 }
 
 export interface AlertRecord {
   id: string;
   deviceId: string;
+  victimName?: string | null;
   status: AlertStatus;
   triggeredAt: number;
   location: AlertLocation | null;
   responderDeviceId?: string | null;
+  responderName?: string | null;
   assignedAt?: number | null;
   createdAt: number;
   updatedAt: number;
@@ -101,6 +106,7 @@ export interface InternalErrorResponse {
 
 export interface AcceptAlertRequest {
   responderDeviceId: string;
+  responderName?: string | null;
 }
 
 export type AcceptAlertFailureCode = 'ALERT_NOT_FOUND' | 'ALERT_ALREADY_ASSIGNED' | 'ALERT_NOT_CLAIMABLE';

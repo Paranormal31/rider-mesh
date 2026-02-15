@@ -40,6 +40,7 @@ const alertLocationSchema = new Schema(
 const alertSchema = new Schema(
   {
     deviceId: { type: String, required: true, trim: true },
+    victimName: { type: String, required: false, default: null, trim: true },
     status: {
       type: String,
       required: true,
@@ -52,6 +53,12 @@ const alertSchema = new Schema(
       default: null,
     },
     responderDeviceId: {
+      type: String,
+      required: false,
+      default: null,
+      trim: true,
+    },
+    responderName: {
       type: String,
       required: false,
       default: null,
@@ -90,6 +97,7 @@ function mapAlertDocument(document: AlertDocument): AlertRecord {
   return {
     id: document._id.toString(),
     deviceId: document.deviceId,
+    victimName: document.victimName ?? null,
     status: document.status,
     triggeredAt: document.triggeredAt,
     location: document.location
@@ -105,6 +113,7 @@ function mapAlertDocument(document: AlertDocument): AlertRecord {
         }
       : null,
     responderDeviceId: document.responderDeviceId ?? null,
+    responderName: document.responderName ?? null,
     assignedAt: document.assignedAt ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
@@ -116,8 +125,10 @@ export async function createAlertRecord(input: CreateAlertPersistenceInput): Pro
 
   const document = await AlertModel.create({
     ...input,
+    victimName: input.victimName ?? null,
     location: input.location,
     responderDeviceId: null,
+    responderName: null,
     assignedAt: null,
     createdAt: nowMs,
     updatedAt: nowMs,
@@ -135,6 +146,7 @@ const CLAIMABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCH
 export async function acceptAlertRecord(input: {
   alertId: string;
   responderDeviceId: string;
+  responderName?: string | null;
   assignedAt: number;
 }): Promise<AcceptAlertRecordResult> {
   if (!mongoose.isValidObjectId(input.alertId)) {
@@ -154,6 +166,7 @@ export async function acceptAlertRecord(input: {
     {
       $set: {
         responderDeviceId: input.responderDeviceId,
+        responderName: input.responderName ?? null,
         assignedAt: input.assignedAt,
         status: 'RESPONDER_ASSIGNED',
         updatedAt: Date.now(),

@@ -8,6 +8,7 @@ import type { EmergencyControllerLocationPayload } from './emergencyControllerSe
 export type NearbyAlertEvent = {
   alertId: string;
   victimDeviceId: string;
+  victimName?: string | null;
   triggeredAt: number;
   location: EmergencyControllerLocationPayload | null;
   distanceMeters: number;
@@ -17,6 +18,7 @@ export type AlertAssignedEvent = {
   alertId: string;
   victimDeviceId: string;
   responderDeviceId: string;
+  responderName?: string | null;
   assignedAt: number;
 };
 

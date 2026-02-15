@@ -24,6 +24,7 @@ interface CreateAppDeps {
   acceptAlert?: (input: {
     alertId: string;
     responderDeviceId: string;
+    responderName?: string | null;
     assignedAt: number;
   }) => Promise<
     | { ok: true; record: AlertRecord }

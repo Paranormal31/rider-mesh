@@ -78,6 +78,7 @@ export function HomeScreen() {
   const [dismissedAlertId, setDismissedAlertId] = useState<string | null>(null);
   const [responderFeedback, setResponderFeedback] = useState<string | null>(null);
   const [isAcceptingAlert, setIsAcceptingAlert] = useState(false);
+  const [assignedResponderName, setAssignedResponderName] = useState<string | null>(null);
 
   const crashModalOpen = useRef(false);
   const contentFade = useRef(new Animated.Value(0)).current;
@@ -125,6 +126,7 @@ export function HomeScreen() {
     });
     const offWarningStarted = emergencyControllerService.on('WARNING_STARTED', () => {
       setControllerState('WARNING_COUNTDOWN');
+      setAssignedResponderName(null);
       if (!crashModalOpen.current) {
         crashModalOpen.current = true;
         router.replace('/crash-alert');
@@ -149,11 +151,18 @@ export function HomeScreen() {
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setControllerState('NORMAL');
       setEscalationRemainingSeconds(0);
+      setAssignedResponderName(null);
       crashModalOpen.current = false;
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setControllerState(emergencyControllerService.getState());
       setEscalationRemainingSeconds(0);
+      crashModalOpen.current = false;
+    });
+    const offAssigned = emergencyControllerService.on('RESPONDER_ASSIGNED', (event) => {
+      setControllerState('RESPONDER_ASSIGNED');
+      setEscalationRemainingSeconds(0);
+      setAssignedResponderName(event.responderName);
       crashModalOpen.current = false;
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
@@ -211,6 +220,7 @@ export function HomeScreen() {
       offEscalationTick();
       offCancelled();
       offAlert();
+      offAssigned();
       offNetwork();
       offRideTick();
       offRideStarted();
@@ -445,7 +455,9 @@ export function HomeScreen() {
       {topNearbyAlert ? (
         <View style={styles.nearbyAlertCard}>
           <Text style={styles.nearbyAlertTitle}>Nearby SOS Alert</Text>
-          <Text style={styles.nearbyAlertMeta}>Victim: {shortDeviceId(topNearbyAlert.victimDeviceId)}</Text>
+          <Text style={styles.nearbyAlertMeta}>
+            Victim: {topNearbyAlert.victimName?.trim() || shortDeviceId(topNearbyAlert.victimDeviceId)}
+          </Text>
           <Text style={styles.nearbyAlertMeta}>Distance: {Math.round(topNearbyAlert.distanceMeters)}m</Text>
           <Text style={styles.nearbyAlertMeta}>
             Triggered: {new Date(topNearbyAlert.triggeredAt).toLocaleTimeString()}
@@ -476,9 +488,17 @@ export function HomeScreen() {
 
       {controllerState === 'SOS_DISPATCHED' ||
       controllerState === 'ESCALATION_COUNTDOWN' ||
-      controllerState === 'ALERT_ESCALATED' ? (
+      controllerState === 'ALERT_ESCALATED' ||
+      controllerState === 'RESPONDER_ASSIGNED' ? (
         <View style={styles.activeSosCard}>
-          {controllerState === 'ALERT_ESCALATED' ? (
+          {controllerState === 'RESPONDER_ASSIGNED' ? (
+            <>
+              <Text style={styles.activeSosTitle}>
+                {assignedResponderName?.trim() ? `${assignedResponderName} is coming` : 'Help is coming'}
+              </Text>
+              <Text style={styles.activeSosMeta}>A nearby rider accepted your SOS.</Text>
+            </>
+          ) : controllerState === 'ALERT_ESCALATED' ? (
             <>
               <Text style={styles.activeSosTitle}>Emergency services on the way</Text>
               <Text style={styles.activeSosMeta}>Emergency has been escalated.</Text>

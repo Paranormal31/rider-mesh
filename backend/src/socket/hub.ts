@@ -57,6 +57,7 @@ export class SocketHub {
       this.io.to(deviceRoom(rider.deviceId)).emit('alert:new_nearby', {
         alertId: alert.id,
         victimDeviceId: alert.deviceId,
+        victimName: alert.victimName ?? null,
         triggeredAt: alert.triggeredAt,
         location: alert.location,
         distanceMeters: rider.distanceMeters,
@@ -73,6 +74,7 @@ export class SocketHub {
       alertId: alert.id,
       victimDeviceId: alert.deviceId,
       responderDeviceId: alert.responderDeviceId,
+      responderName: alert.responderName ?? null,
       assignedAt: alert.assignedAt,
     };
 

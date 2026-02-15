@@ -23,7 +23,7 @@ const MAX_PAST_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_BREADCRUMB_POINTS = 10;
 
-const TOP_LEVEL_ALLOWED_FIELDS = new Set(['deviceId', 'status', 'triggeredAt', 'location']);
+const TOP_LEVEL_ALLOWED_FIELDS = new Set(['deviceId', 'victimName', 'status', 'triggeredAt', 'location']);
 const LOCATION_ALLOWED_FIELDS = new Set(['latitude', 'longitude', 'timestamp', 'breadcrumbTrail']);
 const POINT_ALLOWED_FIELDS = new Set(['latitude', 'longitude', 'timestamp']);
 
@@ -47,7 +47,12 @@ export interface CreateAlertsRouteDeps {
     | { kind: 'not_found' }
     | { kind: 'blocked'; currentStatus: AlertRecord['status'] }
   >;
-  acceptAlert?: (input: { alertId: string; responderDeviceId: string; assignedAt: number }) => Promise<{
+  acceptAlert?: (input: {
+    alertId: string;
+    responderDeviceId: string;
+    responderName?: string | null;
+    assignedAt: number;
+  }) => Promise<{
     ok: true;
     record: AlertRecord;
   } | {
@@ -245,6 +250,7 @@ export function validateCreateAlertPayload(payload: unknown, nowMs: number): Val
   pushUnknownFieldIssues(details, payload, TOP_LEVEL_ALLOWED_FIELDS);
 
   const hasDeviceId = Object.prototype.hasOwnProperty.call(payload, 'deviceId');
+  const hasVictimName = Object.prototype.hasOwnProperty.call(payload, 'victimName');
   const hasStatus = Object.prototype.hasOwnProperty.call(payload, 'status');
   const hasTriggeredAt = Object.prototype.hasOwnProperty.call(payload, 'triggeredAt');
   const hasLocation = Object.prototype.hasOwnProperty.call(payload, 'location');
@@ -274,6 +280,18 @@ export function validateCreateAlertPayload(payload: unknown, nowMs: number): Val
   }
 
   let status: CreateAlertPersistenceInput['status'] = 'TRIGGERED';
+  let victimName: string | null = null;
+  if (hasVictimName) {
+    if (payload.victimName === null) {
+      victimName = null;
+    } else if (typeof payload.victimName !== 'string') {
+      pushIssue(details, 'victimName', 'INVALID_TYPE', 'victimName must be a string or null');
+    } else {
+      const trimmed = payload.victimName.trim();
+      victimName = trimmed.length > 0 ? trimmed : null;
+    }
+  }
+
   if (hasStatus) {
     if (typeof payload.status !== 'string') {
       pushIssue(details, 'status', 'INVALID_TYPE', 'status must be a string');
@@ -399,6 +417,7 @@ export function validateCreateAlertPayload(payload: unknown, nowMs: number): Val
     ok: true,
     value: {
       deviceId,
+      victimName,
       status,
       triggeredAt,
       location,
@@ -477,10 +496,27 @@ function validateAcceptAlertPayload(payload: unknown): {
     };
   }
 
+  let responderName: string | null = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'responderName')) {
+    const raw = payload.responderName;
+    if (raw === null) {
+      responderName = null;
+    } else if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      responderName = trimmed.length > 0 ? trimmed : null;
+    } else {
+      return {
+        ok: false,
+        message: 'responderName must be a string or null.',
+      };
+    }
+  }
+
   return {
     ok: true,
     value: {
       responderDeviceId: responderDeviceIdRaw.trim(),
+      responderName,
     },
   };
 }
@@ -511,6 +547,7 @@ async function processAcceptAlertRequest(input: {
     const result = await input.acceptAlert({
       alertId: input.alertId,
       responderDeviceId: validation.value.responderDeviceId,
+      responderName: validation.value.responderName,
       assignedAt: input.nowMs(),
     });
 

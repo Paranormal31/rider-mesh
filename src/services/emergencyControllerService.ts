@@ -4,6 +4,7 @@ import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
 import { deviceIdentityService } from './deviceIdentityService';
 import { locationService, type LocationPoint } from './locationService';
+import { profileService } from './profileService';
 import { settingsService, type UserSettings } from './settingsService';
 import { socketService, type AlertAssignedEvent } from './socketService';
 import type { ServiceHealth } from './types';
@@ -69,6 +70,7 @@ type ResponderAssignedEvent = {
   type: 'RESPONDER_ASSIGNED';
   alertId: string;
   responderDeviceId: string;
+  responderName: string | null;
   assignedAt: number;
 };
 
@@ -95,6 +97,7 @@ const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
 class EmergencyControllerService {
   private state: EmergencyControllerState = 'NORMAL';
   private deviceId: string | null = null;
+  private victimName: string | null = null;
   private warningRemainingSeconds = 0;
   private warningStartedAtMs: number | null = null;
   private escalationRemainingSeconds = 0;
@@ -134,6 +137,8 @@ class EmergencyControllerService {
     }
 
     this.deviceId = await deviceIdentityService.getDeviceId();
+    const profile = await profileService.getProfile();
+    this.victimName = profile?.name?.trim() ? profile.name.trim() : null;
     await socketService.start();
     this.socketAssignedUnsubscribe = socketService.on('alert:assigned', (event) => {
       this.handleAlertAssigned(event);
@@ -180,6 +185,7 @@ class EmergencyControllerService {
     this.escalationStartedAtMs = null;
     this.reentryLockedUntilMs = 0;
     this.activeAlertId = null;
+    this.victimName = null;
     this.activeIncidentTriggeredAt = null;
     this.createAlertInFlight = null;
     this.statusUpdateInFlight = null;
@@ -514,6 +520,7 @@ class EmergencyControllerService {
       const deviceId = this.deviceId ?? (await deviceIdentityService.getDeviceId());
       const payload = {
         deviceId,
+        victimName: this.victimName,
         status: 'TRIGGERED' as const,
         triggeredAt,
         // Use immediately available payload to avoid blocking the countdown edge on GPS lookup.
@@ -560,6 +567,7 @@ class EmergencyControllerService {
       type: 'RESPONDER_ASSIGNED',
       alertId: event.alertId,
       responderDeviceId: event.responderDeviceId,
+      responderName: event.responderName?.trim() ? event.responderName : null,
       assignedAt: event.assignedAt,
     });
   }
@@ -583,6 +591,7 @@ class EmergencyControllerService {
 
   private async sendCreateAlertRequest(payload: {
     deviceId: string;
+    victimName: string | null;
     status: 'TRIGGERED';
     triggeredAt: number;
     location: {
