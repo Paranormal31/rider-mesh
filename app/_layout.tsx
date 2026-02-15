@@ -13,6 +13,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="index" options={{ title: 'Home' }} />
         <Stack.Screen name="emergency-contacts" options={{ title: 'Emergency Contacts' }} />
+        <Stack.Screen name="responder-inbox" options={{ title: 'Responder Inbox' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack>
       <StatusBar style="auto" />

@@ -6,6 +6,7 @@ import {
   crashDetectionService,
   emergencyControllerService,
   locationService,
+  riderHeartbeatService,
   type EmergencyControllerLocationPayload,
   settingsService,
   type CrashDetectionPhase,
@@ -31,6 +32,10 @@ export function HomeScreen() {
   const [liveBreadcrumbCount, setLiveBreadcrumbCount] = useState(0);
   const [lastPhaseReason, setLastPhaseReason] = useState<PhaseChangeReason | null>(null);
   const [lastPhaseChangedAt, setLastPhaseChangedAt] = useState<number | null>(null);
+  const [responderAssignedMeta, setResponderAssignedMeta] = useState<{
+    responderDeviceId: string;
+    assignedAt: number;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -52,6 +57,13 @@ export function HomeScreen() {
       setState('MONITORING');
       setRemainingSeconds(0);
     });
+    const offResponderAssigned = emergencyControllerService.on('RESPONDER_ASSIGNED', (event) => {
+      setState('RESPONDER_ASSIGNED');
+      setResponderAssignedMeta({
+        responderDeviceId: event.responderDeviceId,
+        assignedAt: event.assignedAt,
+      });
+    });
     const offPhase = crashDetectionService.on('DETECTION_PHASE_CHANGED', (event) => {
       setDetectorPhase(event.toPhase);
       setLastPhaseReason(event.reason ?? null);
@@ -66,6 +78,7 @@ export function HomeScreen() {
         const settings = await settingsService.loadSettings();
         crashDetectionService.applySensitivity(settings.sensitivity);
         await emergencyControllerService.start();
+        await riderHeartbeatService.start();
         if (active) {
           setState(emergencyControllerService.getState());
           setDetectorPhase(crashDetectionService.getPhase());
@@ -85,9 +98,11 @@ export function HomeScreen() {
       offTick();
       offAlert();
       offCancelled();
+      offResponderAssigned();
       offPhase();
       offSettings();
       emergencyControllerService.stop();
+      riderHeartbeatService.stop();
     };
   }, []);
 
@@ -165,6 +180,7 @@ export function HomeScreen() {
     setState('MONITORING');
     setRemainingSeconds(0);
     setAlertLocation(null);
+    setResponderAssignedMeta(null);
   };
 
   const handleDebugMenuToggle = () => {
@@ -217,6 +233,21 @@ export function HomeScreen() {
             </>
           )}
         </>
+      ) : state === 'RESPONDER_ASSIGNED' ? (
+        <>
+          <Text style={styles.mainText}>RESPONDER ASSIGNED</Text>
+          {responderAssignedMeta && (
+            <Text style={styles.stateText}>
+              {`Responder: ${responderAssignedMeta.responderDeviceId} @ ${new Date(
+                responderAssignedMeta.assignedAt
+              ).toLocaleTimeString()}`}
+            </Text>
+          )}
+          <Pressable style={styles.refreshButton} onPress={handleRefreshAfterAlert}>
+            <Text style={styles.refreshButtonText}>Back To Monitoring</Text>
+          </Pressable>
+          {isDebugVisible && renderBreadcrumbDebug()}
+        </>
       ) : (
         <>
           <Text style={styles.title}>Rider Saathi</Text>
@@ -229,6 +260,9 @@ export function HomeScreen() {
           </Text>
           <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
             <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
+          </Pressable>
+          <Pressable style={styles.inboxButton} onPress={() => router.push('/responder-inbox')}>
+            <Text style={styles.inboxButtonText}>Responder Inbox</Text>
           </Pressable>
           {isDebugVisible && renderBreadcrumbDebug()}
           <Pressable style={styles.settingsButton} onPress={() => router.push('/settings')}>
@@ -329,6 +363,17 @@ const styles = StyleSheet.create({
   },
   contactsButtonText: {
     color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  inboxButton: {
+    backgroundColor: '#0891B2',
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  inboxButtonText: {
+    color: '#ECFEFF',
     fontSize: 14,
     fontWeight: '700',
   },
