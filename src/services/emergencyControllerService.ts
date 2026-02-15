@@ -1,6 +1,15 @@
+import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
 import { locationService, type LocationPoint } from './locationService';
+import { settingsService, type UserSettings } from './settingsService';
 import type { ServiceHealth } from './types';
+
+type EmergencyControllerLocationPayload = {
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+  breadcrumbTrail: LocationPoint[];
+};
 
 type EmergencyControllerState =
   | 'MONITORING'
@@ -24,12 +33,9 @@ type CountdownTickEvent = {
 type AlertTriggeredEvent = {
   type: 'ALERT_TRIGGERED';
   triggeredAt: number;
-  location: {
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null;
+  location: EmergencyControllerLocationPayload | null;
+  alarmSoundEnabled: boolean;
+  location: EmergencyControllerLocationPayload | null;
 };
 
 type CancelledEvent = {
@@ -48,7 +54,6 @@ type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMa
   payload: EmergencyControllerEventMap[TEvent]
 ) => void;
 
-const DEFAULT_COUNTDOWN_SECONDS = 10;
 const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
 
 class EmergencyControllerService {
@@ -57,6 +62,7 @@ class EmergencyControllerService {
   private countdownStartedAtMs: number | null = null;
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private crashUnsubscribe: (() => void) | null = null;
+  private settingsUnsubscribe: (() => void) | null = null;
   private running = false;
   private reentryLockedUntilMs = 0;
   private listeners: {
@@ -74,9 +80,19 @@ class EmergencyControllerService {
     }
 
     await crashDetectionService.start();
-    void locationService.startTracking().catch(() => {
-      // Location is optional. Crash flow must continue even when permission is denied.
+    const settings = settingsService.getSettings();
+    if (settings.breadcrumbTrackingEnabled) {
+      void locationService.startTracking().catch(() => {
+        // Location is optional. Crash flow must continue even when permission is denied.
+      });
+    } else {
+      locationService.stopTracking();
+    }
+
+    this.settingsUnsubscribe = settingsService.on('SETTINGS_CHANGED', ({ settings: nextSettings }) => {
+      this.handleSettingsChanged(nextSettings);
     });
+
     this.crashUnsubscribe = crashDetectionService.on('CRASH_DETECTED', (event) =>
       this.handleCrashDetected(event)
     );
@@ -86,8 +102,11 @@ class EmergencyControllerService {
 
   stop(): void {
     this.clearCountdownTimer();
+    alarmAudioService.stop();
     this.crashUnsubscribe?.();
     this.crashUnsubscribe = null;
+    this.settingsUnsubscribe?.();
+    this.settingsUnsubscribe = null;
     this.running = false;
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
@@ -121,6 +140,7 @@ class EmergencyControllerService {
     }
 
     this.clearCountdownTimer();
+    alarmAudioService.stop();
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
@@ -153,8 +173,12 @@ class EmergencyControllerService {
       return;
     }
 
+    const settings = settingsService.getSettings();
     this.state = 'CRASH_DETECTED';
-    this.startCountdown(DEFAULT_COUNTDOWN_SECONDS);
+    if (settings.alarmSoundEnabled) {
+      alarmAudioService.start();
+    }
+    this.startCountdown(settings.countdownDurationSeconds);
   }
 
   private startCountdown(seconds: number): void {
@@ -187,24 +211,23 @@ class EmergencyControllerService {
 
   private async triggerAlert(): Promise<void> {
     const now = Date.now();
+    const settings = settingsService.getSettings();
     this.state = 'ALERT_SENDING';
     const location = await this.buildAlertLocationPayload();
     this.emit('ALERT_TRIGGERED', {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
+      alarmSoundEnabled: settings.alarmSoundEnabled,
       location,
     });
     this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
+    alarmAudioService.stop();
   }
 
-  private async buildAlertLocationPayload(): Promise<{
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null> {
-    const breadcrumbTrail = locationService.getBreadcrumbTrail(10);
+  private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
+    const includeBreadcrumbs = settingsService.getSettings().breadcrumbTrackingEnabled;
+    const breadcrumbTrail = includeBreadcrumbs ? locationService.getBreadcrumbTrail(10) : [];
 
     try {
       const currentLocation = await locationService.getCurrentLocation();
@@ -217,6 +240,28 @@ class EmergencyControllerService {
     } catch {
       return null;
     }
+  }
+
+  private handleSettingsChanged(settings: UserSettings): void {
+    const shouldAlarmBeActive = this.state === 'CRASH_DETECTED' || this.state === 'COUNTDOWN_ACTIVE';
+    if (!settings.alarmSoundEnabled) {
+      alarmAudioService.stop();
+    } else if (shouldAlarmBeActive && !alarmAudioService.isPlaying()) {
+      alarmAudioService.start();
+    }
+
+    if (!this.running) {
+      return;
+    }
+
+    if (settings.breadcrumbTrackingEnabled) {
+      void locationService.startTracking().catch(() => {
+        // Location is optional. Crash flow must continue even when permission is denied.
+      });
+      return;
+    }
+
+    locationService.stopTracking();
   }
 
   private clearCountdownTimer(): void {
@@ -237,4 +282,4 @@ class EmergencyControllerService {
 }
 
 export const emergencyControllerService = new EmergencyControllerService();
-export type { EmergencyControllerState };
+export type { EmergencyControllerLocationPayload, EmergencyControllerState };
