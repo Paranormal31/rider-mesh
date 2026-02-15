@@ -24,6 +24,8 @@ export function HomeScreen() {
   const [remainingSeconds, setRemainingSeconds] = useState(
     emergencyControllerService.getCountdownRemainingSeconds()
   );
+  const [isDebugVisible, setIsDebugVisible] = useState(false);
+  const [isDebugMenuOpen, setIsDebugMenuOpen] = useState(false);
   const [alertLocation, setAlertLocation] = useState<EmergencyControllerLocationPayload | null>(null);
   const [liveLocation, setLiveLocation] = useState<EmergencyControllerLocationPayload | null>(null);
   const [liveBreadcrumbCount, setLiveBreadcrumbCount] = useState(0);
@@ -165,6 +167,15 @@ export function HomeScreen() {
     setAlertLocation(null);
   };
 
+  const handleDebugMenuToggle = () => {
+    setIsDebugMenuOpen((prev) => !prev);
+  };
+
+  const handleDebugVisibilityToggle = () => {
+    setIsDebugVisible((prev) => !prev);
+    setIsDebugMenuOpen(false);
+  };
+
   return (
     <View
       style={[
@@ -172,6 +183,20 @@ export function HomeScreen() {
         isCountdownActive && styles.countdownContainer,
         isAlertTriggered && styles.alertContainer,
       ]}>
+      <View style={styles.debugMenuAnchor}>
+        <Pressable style={styles.debugMenuTrigger} onPress={handleDebugMenuToggle}>
+          <Text style={styles.debugMenuTriggerText}>⋮</Text>
+        </Pressable>
+        {isDebugMenuOpen && (
+          <View style={styles.debugMenu}>
+            <Pressable style={styles.debugMenuItem} onPress={handleDebugVisibilityToggle}>
+              <Text style={styles.debugMenuItemText}>
+                {isDebugVisible ? 'Hide Debug' : 'Show Debug'}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
       {isCountdownActive ? (
         <>
           <Text style={styles.mainText}>CRASH DETECTED</Text>
@@ -188,13 +213,13 @@ export function HomeScreen() {
               <Pressable style={styles.refreshButton} onPress={handleRefreshAfterAlert}>
                 <Text style={styles.refreshButtonText}>Refresh Test</Text>
               </Pressable>
-              {renderBreadcrumbDebug()}
+              {isDebugVisible && renderBreadcrumbDebug()}
             </>
           )}
         </>
       ) : (
         <>
-          <Text style={styles.title}>Dextrex Control Center</Text>
+          <Text style={styles.title}>Rider Saathi</Text>
           <Text style={styles.subtitle}>Monitoring for crash events.</Text>
           <Text style={styles.stateText}>State: {state}</Text>
           <Text style={styles.stateText}>Detector Phase: {detectorPhase}</Text>
@@ -205,7 +230,7 @@ export function HomeScreen() {
           <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
             <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
           </Pressable>
-          {renderBreadcrumbDebug()}
+          {isDebugVisible && renderBreadcrumbDebug()}
           <Pressable style={styles.settingsButton} onPress={() => router.push('/settings')}>
             <Text style={styles.settingsButtonText}>Settings</Text>
           </Pressable>
@@ -230,6 +255,47 @@ const styles = StyleSheet.create({
   },
   alertContainer: {
     backgroundColor: '#7F1D1D',
+  },
+  debugMenuAnchor: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 10,
+    alignItems: 'flex-end',
+  },
+  debugMenuTrigger: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17, 24, 39, 0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(156, 163, 175, 0.3)',
+  },
+  debugMenuTriggerText: {
+    color: '#E5E7EB',
+    fontSize: 18,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  debugMenu: {
+    marginTop: 8,
+    backgroundColor: '#111827',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#374151',
+    minWidth: 120,
+    overflow: 'hidden',
+  },
+  debugMenuItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  debugMenuItemText: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    fontWeight: '600',
   },
   title: {
     color: '#FFFFFF',
