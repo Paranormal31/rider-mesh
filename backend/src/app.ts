@@ -1,17 +1,22 @@
+import { randomUUID } from 'node:crypto';
+
 import cors from 'cors';
 import express from 'express';
 
+import { createAlertsRouter } from './routes/alerts';
 import { createHealthRouter } from './routes/health';
+import type { AlertRecord, CreateAlertPersistenceInput } from './types/alert';
 import type { DatabaseHealth } from './types/health';
 
 interface CreateAppDeps {
   getDbHealth: () => DatabaseHealth;
+  createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
   now: () => Date;
   uptimeSec: () => number;
   corsOrigins: string[];
 }
 
-export function createApp({ getDbHealth, now, uptimeSec, corsOrigins }: CreateAppDeps) {
+export function createApp({ getDbHealth, createAlert, now, uptimeSec, corsOrigins }: CreateAppDeps) {
   const app = express();
 
   const allowedOrigins = new Set(corsOrigins);
@@ -29,8 +34,21 @@ export function createApp({ getDbHealth, now, uptimeSec, corsOrigins }: CreateAp
     })
   );
 
+  app.use((_request, response, next) => {
+    const requestId = randomUUID();
+    response.locals.requestId = requestId;
+    response.setHeader('X-Request-Id', requestId);
+    next();
+  });
+
   app.use(express.json());
   app.use(createHealthRouter({ getDbHealth, now, uptimeSec }));
+  app.use(
+    createAlertsRouter({
+      nowMs: () => now().getTime(),
+      createAlert,
+    })
+  );
 
   return app;
 }
