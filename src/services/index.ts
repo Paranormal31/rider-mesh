@@ -1,3 +1,4 @@
+export { alarmAudioService } from './alarmAudioService';
 export { crashDetectionService } from './crashDetectionService';
 export type {
   CrashDetectedEvent,
@@ -19,4 +20,11 @@ export type {
   EmergencyControllerState,
 } from './emergencyControllerService';
 export { locationService } from './locationService';
+export { settingsService } from './settingsService';
+export type {
+  CountdownDurationSeconds,
+  DetectionSensitivity,
+  SettingsChangedEvent,
+  UserSettings,
+} from './settingsService';
 export type { ServiceHealth, ServiceState } from './types';

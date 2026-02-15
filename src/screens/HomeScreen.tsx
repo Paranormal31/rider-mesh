@@ -7,6 +7,7 @@ import {
   emergencyControllerService,
   locationService,
   type EmergencyControllerLocationPayload,
+  settingsService,
   type CrashDetectionPhase,
   type EmergencyControllerState,
   type PhaseChangeReason,
@@ -30,6 +31,8 @@ export function HomeScreen() {
   const [lastPhaseChangedAt, setLastPhaseChangedAt] = useState<number | null>(null);
 
   useEffect(() => {
+    let active = true;
+
     const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
       setState('COUNTDOWN_ACTIVE');
       setRemainingSeconds(event.remainingSeconds);
@@ -52,21 +55,36 @@ export function HomeScreen() {
       setLastPhaseReason(event.reason ?? null);
       setLastPhaseChangedAt(event.timestamp);
     });
+    const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
+      crashDetectionService.applySensitivity(settings.sensitivity);
+    });
 
-    emergencyControllerService.start().then(
-      () => {
-        setState(emergencyControllerService.getState());
-        setDetectorPhase(crashDetectionService.getPhase());
-      },
-      () => setState('MONITORING')
-    );
+    const boot = async () => {
+      try {
+        const settings = await settingsService.loadSettings();
+        crashDetectionService.applySensitivity(settings.sensitivity);
+        await emergencyControllerService.start();
+        if (active) {
+          setState(emergencyControllerService.getState());
+          setDetectorPhase(crashDetectionService.getPhase());
+        }
+      } catch {
+        if (active) {
+          setState('MONITORING');
+        }
+      }
+    };
+
+    void boot();
 
     return () => {
+      active = false;
       offStarted();
       offTick();
       offAlert();
       offCancelled();
       offPhase();
+      offSettings();
       emergencyControllerService.stop();
     };
   }, []);
@@ -188,6 +206,9 @@ export function HomeScreen() {
             <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
           </Pressable>
           {renderBreadcrumbDebug()}
+          <Pressable style={styles.settingsButton} onPress={() => router.push('/settings')}>
+            <Text style={styles.settingsButtonText}>Settings</Text>
+          </Pressable>
         </>
       )}
     </View>
@@ -242,6 +263,19 @@ const styles = StyleSheet.create({
   },
   contactsButtonText: {
     color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  settingsButton: {
+    backgroundColor: '#111827',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#374151',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  settingsButtonText: {
+    color: '#E5E7EB',
     fontSize: 14,
     fontWeight: '700',
   },

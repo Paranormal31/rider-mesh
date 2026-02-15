@@ -1,6 +1,7 @@
 import { Accelerometer } from 'expo-sensors';
 import type { AccelerometerMeasurement } from 'expo-sensors';
 
+import type { DetectionSensitivity } from './settingsService';
 import type { ServiceHealth } from './types';
 
 type SensorSubscription = {
@@ -147,6 +148,23 @@ class CrashDetectionService {
 
   setThreshold(nextThreshold: number): void {
     this.setSpikeThresholdG(nextThreshold);
+  }
+
+  applySensitivity(level: DetectionSensitivity): void {
+    switch (level) {
+      case 'LOW':
+        this.setSpikeThresholdG(3.0);
+        this.setStillnessThresholdG(1.4);
+        return;
+      case 'MEDIUM':
+        this.setSpikeThresholdG(2.5);
+        this.setStillnessThresholdG(1.2);
+        return;
+      case 'HIGH':
+        this.setSpikeThresholdG(2.0);
+        this.setStillnessThresholdG(1.0);
+        return;
+    }
   }
 
   setSpikeThresholdG(nextThreshold: number): void {
