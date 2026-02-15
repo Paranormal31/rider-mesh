@@ -2,6 +2,13 @@ import { crashDetectionService, type CrashDetectedEvent } from './crashDetection
 import { locationService, type LocationPoint } from './locationService';
 import type { ServiceHealth } from './types';
 
+type EmergencyControllerLocationPayload = {
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+  breadcrumbTrail: LocationPoint[];
+};
+
 type EmergencyControllerState =
   | 'MONITORING'
   | 'CRASH_DETECTED'
@@ -24,12 +31,7 @@ type CountdownTickEvent = {
 type AlertTriggeredEvent = {
   type: 'ALERT_TRIGGERED';
   triggeredAt: number;
-  location: {
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null;
+  location: EmergencyControllerLocationPayload | null;
 };
 
 type CancelledEvent = {
@@ -198,12 +200,7 @@ class EmergencyControllerService {
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
   }
 
-  private async buildAlertLocationPayload(): Promise<{
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null> {
+  private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
     const breadcrumbTrail = locationService.getBreadcrumbTrail(10);
 
     try {
@@ -237,4 +234,4 @@ class EmergencyControllerService {
 }
 
 export const emergencyControllerService = new EmergencyControllerService();
-export type { EmergencyControllerState };
+export type { EmergencyControllerLocationPayload, EmergencyControllerState };

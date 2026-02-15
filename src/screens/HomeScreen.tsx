@@ -5,6 +5,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   crashDetectionService,
   emergencyControllerService,
+  locationService,
+  type EmergencyControllerLocationPayload,
   type CrashDetectionPhase,
   type EmergencyControllerState,
   type PhaseChangeReason,
@@ -21,6 +23,9 @@ export function HomeScreen() {
   const [remainingSeconds, setRemainingSeconds] = useState(
     emergencyControllerService.getCountdownRemainingSeconds()
   );
+  const [alertLocation, setAlertLocation] = useState<EmergencyControllerLocationPayload | null>(null);
+  const [liveLocation, setLiveLocation] = useState<EmergencyControllerLocationPayload | null>(null);
+  const [liveBreadcrumbCount, setLiveBreadcrumbCount] = useState(0);
   const [lastPhaseReason, setLastPhaseReason] = useState<PhaseChangeReason | null>(null);
   const [lastPhaseChangedAt, setLastPhaseChangedAt] = useState<number | null>(null);
 
@@ -33,8 +38,9 @@ export function HomeScreen() {
       setState('COUNTDOWN_ACTIVE');
       setRemainingSeconds(event.remainingSeconds);
     });
-    const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
-      setState(emergencyControllerService.getState());
+    const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', (event) => {
+      setAlertLocation(event.location);
+      setState('ALERT_SENT');
       setRemainingSeconds(0);
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
@@ -65,8 +71,81 @@ export function HomeScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    const refreshLiveLocation = () => {
+      void locationService
+        .getCurrentLocation()
+        .then((point) => {
+          setLiveLocation({
+            ...point,
+            breadcrumbTrail: [],
+          });
+        })
+        .catch(() => {
+          setLiveLocation(null);
+        })
+        .finally(() => {
+          setLiveBreadcrumbCount(locationService.getBreadcrumbTrail(10).length);
+        });
+    };
+
+    refreshLiveLocation();
+    const timer = setInterval(refreshLiveLocation, 3000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+
+  const breadcrumbTrail = alertLocation?.breadcrumbTrail ?? [];
+  const breadcrumbCount = breadcrumbTrail.length;
+  const firstBreadcrumb = breadcrumbTrail[0] ?? null;
+  const lastBreadcrumb = breadcrumbTrail[breadcrumbTrail.length - 1] ?? null;
+
   const isCountdownActive = state === 'COUNTDOWN_ACTIVE';
   const isAlertTriggered = state === 'ALERT_SENDING' || state === 'ALERT_SENT';
+  const isAlertSent = state === 'ALERT_SENT';
+
+  const formatPoint = (point: { latitude: number; longitude: number; timestamp: number } | null) => {
+    if (!point) {
+      return 'None';
+    }
+
+    return `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)} @ ${new Date(
+      point.timestamp
+    ).toLocaleTimeString()}`;
+  };
+
+  const renderBreadcrumbDebug = () => (
+    <View style={styles.debugPanel}>
+      <Text style={styles.debugTitle}>Breadcrumb Debug</Text>
+      <Text style={styles.debugText}>
+        Live Current Location:{' '}
+        {liveLocation
+          ? `${liveLocation.latitude.toFixed(6)}, ${liveLocation.longitude.toFixed(6)} @ ${new Date(
+              liveLocation.timestamp
+            ).toLocaleTimeString()}`
+          : 'Location: unavailable'}
+      </Text>
+      <Text style={styles.debugText}>Live Breadcrumb Count: {liveBreadcrumbCount}</Text>
+      <Text style={styles.debugText}>
+        Alert Payload Location:{' '}
+        {alertLocation
+          ? `${alertLocation.latitude.toFixed(6)}, ${alertLocation.longitude.toFixed(6)} @ ${new Date(
+              alertLocation.timestamp
+            ).toLocaleTimeString()}`
+          : 'Location: unavailable'}
+      </Text>
+      <Text style={styles.debugText}>Breadcrumb Count: {breadcrumbCount}</Text>
+      <Text style={styles.debugText}>First Breadcrumb: {formatPoint(firstBreadcrumb)}</Text>
+      <Text style={styles.debugText}>Last Breadcrumb: {formatPoint(lastBreadcrumb)}</Text>
+    </View>
+  );
+
+  const handleRefreshAfterAlert = () => {
+    setState('MONITORING');
+    setRemainingSeconds(0);
+    setAlertLocation(null);
+  };
 
   return (
     <View
@@ -84,7 +163,17 @@ export function HomeScreen() {
           </Pressable>
         </>
       ) : isAlertTriggered ? (
-        <Text style={styles.mainText}>ALERT TRIGGERED</Text>
+        <>
+          <Text style={styles.mainText}>ALERT TRIGGERED</Text>
+          {isAlertSent && (
+            <>
+              <Pressable style={styles.refreshButton} onPress={handleRefreshAfterAlert}>
+                <Text style={styles.refreshButtonText}>Refresh Test</Text>
+              </Pressable>
+              {renderBreadcrumbDebug()}
+            </>
+          )}
+        </>
       ) : (
         <>
           <Text style={styles.title}>Dextrex Control Center</Text>
@@ -98,6 +187,7 @@ export function HomeScreen() {
           <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
             <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
           </Pressable>
+          {renderBreadcrumbDebug()}
         </>
       )}
     </View>
@@ -177,6 +267,36 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     color: '#7F1D1D',
     fontSize: 18,
+    fontWeight: '800',
+  },
+  debugPanel: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#111827',
+    borderRadius: 12,
+    padding: 14,
+    gap: 6,
+  },
+  debugTitle: {
+    color: '#93C5FD',
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  debugText: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  refreshButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  refreshButtonText: {
+    color: '#062E25',
+    fontSize: 14,
     fontWeight: '800',
   },
 });
