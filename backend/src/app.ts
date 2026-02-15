@@ -4,10 +4,12 @@ import cors from 'cors';
 import express from 'express';
 
 import { createAlertsRouter } from './routes/alerts';
+import { createHazardsRouter } from './routes/hazards';
 import { createHealthRouter } from './routes/health';
 import { createRidersRouter } from './routes/riders';
 import type { AlertRecord, CreateAlertPersistenceInput } from './types/alert';
 import type { DatabaseHealth } from './types/health';
+import type { CreateHazardInput, HazardRecord } from './types/hazard';
 import type { RiderPresenceRecord } from './types/rider';
 
 interface CreateAppDeps {
@@ -43,6 +45,11 @@ interface CreateAppDeps {
     status: 'CANCELLED' | 'ESCALATED';
     updatedAt: number;
   }) => Promise<void> | void;
+  listHazards?: () => Promise<HazardRecord[]>;
+  createHazard?: (input: CreateHazardInput) => Promise<HazardRecord>;
+  removeHazard?: (hazardId: string) => Promise<{ removed: boolean }>;
+  onHazardCreated?: (hazard: HazardRecord) => Promise<void> | void;
+  onHazardRemoved?: (hazardId: string) => Promise<void> | void;
   now: () => Date;
   uptimeSec: () => number;
   corsOrigins: string[];
@@ -57,6 +64,11 @@ export function createApp({
   onAlertCreated,
   onAlertAssigned,
   onAlertStatusUpdated,
+  listHazards,
+  createHazard,
+  removeHazard,
+  onHazardCreated,
+  onHazardRemoved,
   now,
   uptimeSec,
   corsOrigins,
@@ -109,6 +121,18 @@ export function createApp({
       updatedAt: 0,
       createdAt: 0,
     }));
+  const listHazardsImpl = listHazards ?? (async () => []);
+  const createHazardImpl =
+    createHazard ??
+    (async (input) => ({
+      id: '',
+      type: input.type,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      createdAt: 0,
+      updatedAt: 0,
+    }));
+  const removeHazardImpl = removeHazard ?? (async () => ({ removed: false }));
 
   app.use(express.json());
   app.use(createHealthRouter({ getDbHealth, now, uptimeSec }));
@@ -127,6 +151,15 @@ export function createApp({
     createRidersRouter({
       nowMs: () => now().getTime(),
       upsertHeartbeat: upsertHeartbeatImpl,
+    })
+  );
+  app.use(
+    createHazardsRouter({
+      listHazards: listHazardsImpl,
+      createHazard: createHazardImpl,
+      removeHazard: removeHazardImpl,
+      onHazardCreated,
+      onHazardRemoved,
     })
   );
 

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createApp } from './app';
 import { connectToDatabase, disconnectFromDatabase, readDbHealth } from './config/db';
 import { acceptAlertRecord, createAlertRecord, updateAlertStatusRecord } from './models/alert';
+import { createHazardRecord, listHazardRecords, removeHazardRecord } from './models/hazard';
 import { listActiveRiders, upsertRiderHeartbeat } from './models/rider';
 import { findNearbyRidersForAlert } from './services/dispatchService';
 import { SocketHub } from './socket/hub';
@@ -78,6 +79,15 @@ async function bootstrap(): Promise<void> {
           cancelledAt: input.updatedAt,
         });
       }
+    },
+    listHazards: listHazardRecords,
+    createHazard: createHazardRecord,
+    removeHazard: removeHazardRecord,
+    onHazardCreated: (hazard) => {
+      socketHub.emitHazardCreated(hazard);
+    },
+    onHazardRemoved: (hazardId) => {
+      socketHub.emitHazardRemoved(hazardId);
     },
     now: () => new Date(),
     uptimeSec: processUptimeSec,

@@ -1,5 +1,5 @@
 import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Alert, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusBadge } from '@/src/components/ui';
@@ -29,6 +29,7 @@ type MapModules = {
   Polyline?: ComponentType<any>;
   Heatmap?: ComponentType<any>;
   Circle?: ComponentType<any>;
+  ProviderGoogle?: unknown;
 };
 
 function loadMapModules(): MapModules {
@@ -42,10 +43,18 @@ function loadMapModules(): MapModules {
       Polyline: maps.Polyline,
       Heatmap: maps.Heatmap,
       Circle: maps.Circle,
+      ProviderGoogle: maps.PROVIDER_GOOGLE,
     };
   } catch {
     return { available: false };
   }
+}
+
+function logHeatmapDebug(label: string, payload: Record<string, unknown>): void {
+  if (!__DEV__) {
+    return;
+  }
+  console.log(`[heatmap-debug] ${label}`, payload);
 }
 
 export function HomeScreen() {
@@ -97,6 +106,15 @@ export function HomeScreen() {
         setRideSession(rideSessionService.getCurrentSession());
         setElapsedMs(rideSessionService.getElapsedMs());
         setHazards(loadedHazards);
+        logHeatmapDebug('bootstrap hazards loaded', {
+          count: loadedHazards.length,
+          sample: loadedHazards.slice(0, 2).map((hazard) => ({
+            id: hazard.id,
+            type: hazard.type,
+            latitude: hazard.latitude,
+            longitude: hazard.longitude,
+          })),
+        });
         if (profile?.name) {
           setRiderName(profile.name);
         }
@@ -172,9 +190,16 @@ export function HomeScreen() {
     });
     const offHazardAdded = hazardService.on('HAZARD_ADDED', ({ hazard }) => {
       setHazards((prev) => [hazard, ...prev]);
+      logHeatmapDebug('hazard added event', {
+        id: hazard.id,
+        type: hazard.type,
+        latitude: hazard.latitude,
+        longitude: hazard.longitude,
+      });
     });
     const offHazardRemoved = hazardService.on('HAZARD_REMOVED', ({ id }) => {
       setHazards((prev) => prev.filter((item) => item.id !== id));
+      logHeatmapDebug('hazard removed event', { id });
     });
     const offResponder = responderService.on('ALERTS_UPDATED', ({ alerts }) => {
       setResponderAlerts(alerts);
@@ -220,6 +245,26 @@ export function HomeScreen() {
       clearInterval(positionTimer);
     };
   }, [router]);
+
+  useFocusEffect(
+    useMemo(
+      () => () => {
+        void hazardService.listHazards().then((loadedHazards) => {
+          setHazards(loadedHazards);
+          logHeatmapDebug('focus hazards loaded', {
+            count: loadedHazards.length,
+            sample: loadedHazards.slice(0, 2).map((hazard) => ({
+              id: hazard.id,
+              type: hazard.type,
+              latitude: hazard.latitude,
+              longitude: hazard.longitude,
+            })),
+          });
+        });
+      },
+      []
+    )
+  );
 
   useEffect(() => {
     Animated.timing(contentFade, {
@@ -274,47 +319,28 @@ export function HomeScreen() {
     return 'offline' as const;
   }, [networkStatus]);
 
-  const heatmapByType = useMemo(() => {
-    const grouped: Record<HazardType, Array<{ latitude: number; longitude: number; weight: number }>> = {
-      POTHOLE: [],
-      CONSTRUCTION: [],
-      WATERLOGGING: [],
-      ACCIDENT_ZONE: [],
-    };
-
-    for (const hazard of hazards) {
-      grouped[hazard.type].push({
+  const heatmapPoints = useMemo(
+    () =>
+      hazards.map((hazard) => ({
         latitude: hazard.latitude,
         longitude: hazard.longitude,
-        weight: 1,
-      });
-    }
+        weight: 1.5,
+      })),
+    [hazards]
+  );
 
-    return grouped;
-  }, [hazards]);
-
-  const heatmapGradients: Record<HazardType, { colors: string[]; startPoints: number[]; colorMapSize: number }> = {
-    POTHOLE: {
-      colors: ['#FDBA74', '#F97316', '#C2410C'],
-      startPoints: [0.2, 0.6, 1],
-      colorMapSize: 256,
-    },
-    CONSTRUCTION: {
-      colors: ['#FDE68A', '#FACC15', '#A16207'],
-      startPoints: [0.2, 0.6, 1],
-      colorMapSize: 256,
-    },
-    WATERLOGGING: {
-      colors: ['#93C5FD', '#3B82F6', '#1E3A8A'],
-      startPoints: [0.2, 0.6, 1],
-      colorMapSize: 256,
-    },
-    ACCIDENT_ZONE: {
-      colors: ['#FCA5A5', '#EF4444', '#991B1B'],
-      startPoints: [0.2, 0.6, 1],
-      colorMapSize: 256,
-    },
-  };
+  useEffect(() => {
+    logHeatmapDebug('module availability', {
+      platform: Platform.OS,
+      mapAvailable: mapModules.available,
+      hasMapView: Boolean(MapViewComponent),
+      hasMarker: Boolean(MarkerComponent),
+      hasPolyline: Boolean(PolylineComponent),
+      hasHeatmap: Boolean(HeatmapComponent),
+      hasCircle: Boolean(CircleComponent),
+      hasProviderGoogle: Boolean(mapModules.ProviderGoogle),
+    });
+  }, [CircleComponent, HeatmapComponent, MapViewComponent, MarkerComponent, PolylineComponent, mapModules.ProviderGoogle, mapModules.available]);
 
   const redZones = useMemo(() => {
     const threshold = 5;
@@ -364,6 +390,16 @@ export function HomeScreen() {
 
     return zones;
   }, [hazards]);
+
+  useEffect(() => {
+    logHeatmapDebug('heatmap render inputs', {
+      hazardsCount: hazards.length,
+      heatmapPointsCount: heatmapPoints.length,
+      redZonesCount: redZones.length,
+      canRenderHeatmap: Boolean(HeatmapComponent) && heatmapPoints.length > 0,
+      firstPoint: heatmapPoints[0] ?? null,
+    });
+  }, [HeatmapComponent, hazards.length, heatmapPoints, redZones.length]);
   const topNearbyAlert = useMemo(() => {
     const visible = responderAlerts.filter((alert) => alert.alertId !== dismissedAlertId);
     if (visible.length === 0) {
@@ -488,21 +524,15 @@ export function HomeScreen() {
 
       <View style={styles.mapCard}>
         {mapModules.available && MapViewComponent && MarkerComponent ? (
-          <MapViewComponent style={styles.map} initialRegion={mapRegion} region={mapRegion}>
-            {HeatmapComponent && Platform.OS === 'android'
-              ? (Object.keys(heatmapByType) as HazardType[]).map((type) =>
-                  heatmapByType[type].length > 0 ? (
-                    <HeatmapComponent
-                      key={`heatmap-${type}`}
-                      points={heatmapByType[type]}
-                      radius={30}
-                      opacity={0.7}
-                      gradient={heatmapGradients[type]}
-                    />
-                  ) : null
-                )
-              : null}
-            {CircleComponent && Platform.OS === 'android'
+          <MapViewComponent
+            style={styles.map}
+            initialRegion={mapRegion}
+            region={mapRegion}
+            provider={mapModules.ProviderGoogle}>
+            {HeatmapComponent && heatmapPoints.length > 0 ? (
+              <HeatmapComponent points={heatmapPoints} radius={30} opacity={0.9} />
+            ) : null}
+            {CircleComponent
               ? redZones.map((zone, index) => (
                   <CircleComponent
                     key={`red-zone-${index}`}

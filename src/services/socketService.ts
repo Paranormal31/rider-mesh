@@ -4,6 +4,7 @@ import { SOCKET_BASE_URL } from '@/src/config/api';
 
 import { deviceIdentityService } from './deviceIdentityService';
 import type { EmergencyControllerLocationPayload } from './emergencyControllerService';
+import type { HazardRecord } from './hazardService';
 
 export type NearbyAlertEvent = {
   alertId: string;
@@ -27,10 +28,18 @@ export type AlertCancelledEvent = {
   cancelledAt: number;
 };
 
+export type HazardCreatedEvent = HazardRecord;
+
+export type HazardRemovedEvent = {
+  id: string;
+};
+
 type SocketEventMap = {
   'alert:new_nearby': NearbyAlertEvent;
   'alert:assigned': AlertAssignedEvent;
   'alert:cancelled': AlertCancelledEvent;
+  'hazard:created': HazardCreatedEvent;
+  'hazard:removed': HazardRemovedEvent;
 };
 
 class SocketService {

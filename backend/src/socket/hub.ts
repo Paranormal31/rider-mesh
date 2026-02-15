@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 
 import type { AlertRecord } from '../types/alert';
+import type { HazardRecord } from '../types/hazard';
 
 const DEVICE_EVENT = 'register_device';
 
@@ -102,5 +103,21 @@ export class SocketHub {
       alertId: input.alertId,
       cancelledAt: input.cancelledAt,
     });
+  }
+
+  emitHazardCreated(hazard: HazardRecord): void {
+    if (!this.io) {
+      return;
+    }
+
+    this.io.emit('hazard:created', hazard);
+  }
+
+  emitHazardRemoved(hazardId: string): void {
+    if (!this.io) {
+      return;
+    }
+
+    this.io.emit('hazard:removed', { id: hazardId });
   }
 }
