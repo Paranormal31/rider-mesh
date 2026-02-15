@@ -7,10 +7,12 @@ import { createAlertsRouter } from './routes/alerts';
 import { createHazardsRouter } from './routes/hazards';
 import { createHealthRouter } from './routes/health';
 import { createRidersRouter } from './routes/riders';
+import { createRidesRouter } from './routes/rides';
 import type { AlertRecord, CreateAlertPersistenceInput } from './types/alert';
 import type { DatabaseHealth } from './types/health';
 import type { CreateHazardInput, HazardRecord } from './types/hazard';
 import type { RiderPresenceRecord } from './types/rider';
+import type { EndRideInput, RideRecord, StartRideInput } from './types/ride';
 
 interface CreateAppDeps {
   getDbHealth: () => DatabaseHealth;
@@ -50,6 +52,9 @@ interface CreateAppDeps {
   removeHazard?: (hazardId: string) => Promise<{ removed: boolean }>;
   onHazardCreated?: (hazard: HazardRecord) => Promise<void> | void;
   onHazardRemoved?: (hazardId: string) => Promise<void> | void;
+  startRide?: (input: StartRideInput) => Promise<RideRecord>;
+  endRide?: (input: EndRideInput) => Promise<RideRecord | null>;
+  listRidesForDevice?: (deviceId: string) => Promise<RideRecord[]>;
   now: () => Date;
   uptimeSec: () => number;
   corsOrigins: string[];
@@ -69,6 +74,9 @@ export function createApp({
   removeHazard,
   onHazardCreated,
   onHazardRemoved,
+  startRide,
+  endRide,
+  listRidesForDevice,
   now,
   uptimeSec,
   corsOrigins,
@@ -133,6 +141,25 @@ export function createApp({
       updatedAt: 0,
     }));
   const removeHazardImpl = removeHazard ?? (async () => ({ removed: false }));
+  const startRideImpl =
+    startRide ??
+    (async (input) => ({
+      id: '',
+      deviceId: input.deviceId,
+      sessionId: input.sessionId,
+      status: 'ACTIVE',
+      startedAt: input.startedAt,
+      endedAt: null,
+      durationMs: null,
+      distanceKm: 0,
+      fatigueWarnings: 0,
+      hazardsReported: 0,
+      sosTriggered: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    }));
+  const endRideImpl = endRide ?? (async () => null);
+  const listRidesForDeviceImpl = listRidesForDevice ?? (async () => []);
 
   app.use(express.json());
   app.use(createHealthRouter({ getDbHealth, now, uptimeSec }));
@@ -160,6 +187,14 @@ export function createApp({
       removeHazard: removeHazardImpl,
       onHazardCreated,
       onHazardRemoved,
+    })
+  );
+  app.use(
+    createRidesRouter({
+      nowMs: () => now().getTime(),
+      startRide: startRideImpl,
+      endRide: endRideImpl,
+      listRidesForDevice: listRidesForDeviceImpl,
     })
   );
 

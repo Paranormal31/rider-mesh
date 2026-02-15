@@ -6,6 +6,7 @@ import { connectToDatabase, disconnectFromDatabase, readDbHealth } from './confi
 import { acceptAlertRecord, createAlertRecord, updateAlertStatusRecord } from './models/alert';
 import { createHazardRecord, listHazardRecords, removeHazardRecord } from './models/hazard';
 import { listActiveRiders, upsertRiderHeartbeat } from './models/rider';
+import { endRideRecord, listRideRecordsForDevice, startRideRecord } from './models/ride';
 import { findNearbyRidersForAlert } from './services/dispatchService';
 import { SocketHub } from './socket/hub';
 import { loadEnv } from './config/env';
@@ -89,6 +90,9 @@ async function bootstrap(): Promise<void> {
     onHazardRemoved: (hazardId) => {
       socketHub.emitHazardRemoved(hazardId);
     },
+    startRide: startRideRecord,
+    endRide: endRideRecord,
+    listRidesForDevice: listRideRecordsForDevice,
     now: () => new Date(),
     uptimeSec: processUptimeSec,
     corsOrigins: env.corsOrigins,

@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "rider-mesh",
+    "name": "Rider Saathi",
     "slug": "rider-mesh",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/rider-saathi-logo.png",
     "scheme": "ridermesh",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,10 +13,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/rider-saathi-logo.png"
       },
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
@@ -32,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/rider-saathi-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
