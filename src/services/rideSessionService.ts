@@ -125,6 +125,7 @@ class RideSessionService {
       return null;
     }
 
+    const startedAt = this.currentSession.startedAt;
     const endedAt = Date.now();
     const session: RideSession = {
       ...this.currentSession,
@@ -136,7 +137,7 @@ class RideSessionService {
     const summary: RideSummary = {
       id: createId('summary'),
       sessionId: session.id,
-      durationMs: Math.max(0, endedAt - session.startedAt),
+      durationMs: Math.max(0, endedAt - startedAt),
       distanceKm: 0,
       fatigueWarnings: 0,
       hazardsReported: 0,

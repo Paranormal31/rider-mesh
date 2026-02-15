@@ -11,11 +11,13 @@ import {
   locationService,
   networkMeshService,
   profileService,
+  responderService,
   rideSessionService,
   settingsService,
   type HazardRecord,
   type HazardType,
   type NetworkMeshStatus,
+  type ResponderAlert,
   type RideSession,
 } from '@/src/services';
 
@@ -69,9 +71,15 @@ export function HomeScreen() {
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Position[]>([]);
   const [controllerState, setControllerState] = useState(emergencyControllerService.getState());
+  const [escalationRemainingSeconds, setEscalationRemainingSeconds] = useState(
+    emergencyControllerService.getEscalationRemainingSeconds()
+  );
+  const [responderAlerts, setResponderAlerts] = useState<ResponderAlert[]>(responderService.getAlerts());
+  const [dismissedAlertId, setDismissedAlertId] = useState<string | null>(null);
+  const [responderFeedback, setResponderFeedback] = useState<string | null>(null);
+  const [isAcceptingAlert, setIsAcceptingAlert] = useState(false);
 
   const crashModalOpen = useRef(false);
-  const activeSosModalOpen = useRef(false);
   const contentFade = useRef(new Animated.Value(0)).current;
   const sosPulse = useRef(new Animated.Value(1)).current;
 
@@ -105,7 +113,7 @@ export function HomeScreen() {
         }
       } catch {
         if (active) {
-          setControllerState('MONITORING');
+          setControllerState('NORMAL');
         }
       }
     };
@@ -115,30 +123,38 @@ export function HomeScreen() {
     const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
       crashDetectionService.applySensitivity(settings.sensitivity);
     });
-    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setControllerState('COUNTDOWN_ACTIVE');
+    const offWarningStarted = emergencyControllerService.on('WARNING_STARTED', () => {
+      setControllerState('WARNING_COUNTDOWN');
       if (!crashModalOpen.current) {
         crashModalOpen.current = true;
-        activeSosModalOpen.current = false;
-        router.push('/crash-alert');
+        router.replace('/crash-alert');
       }
-      setElapsedMs(rideSessionService.getElapsedMs() + event.remainingSeconds);
     });
-    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', () => {
-      setControllerState('COUNTDOWN_ACTIVE');
+    const offWarningTick = emergencyControllerService.on('WARNING_TICK', () => {
+      setControllerState('WARNING_COUNTDOWN');
+    });
+    const offSosDispatched = emergencyControllerService.on('SOS_DISPATCHED', () => {
+      setControllerState(emergencyControllerService.getState());
+      setEscalationRemainingSeconds(emergencyControllerService.getEscalationRemainingSeconds());
+      crashModalOpen.current = false;
+    });
+    const offEscalationStarted = emergencyControllerService.on('ESCALATION_COUNTDOWN_STARTED', (event) => {
+      setControllerState('ESCALATION_COUNTDOWN');
+      setEscalationRemainingSeconds(event.remainingSeconds);
+    });
+    const offEscalationTick = emergencyControllerService.on('ESCALATION_COUNTDOWN_TICK', (event) => {
+      setControllerState('ESCALATION_COUNTDOWN');
+      setEscalationRemainingSeconds(event.remainingSeconds);
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
-      setControllerState('MONITORING');
+      setControllerState('NORMAL');
+      setEscalationRemainingSeconds(0);
       crashModalOpen.current = false;
-      activeSosModalOpen.current = false;
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setControllerState(emergencyControllerService.getState());
+      setEscalationRemainingSeconds(0);
       crashModalOpen.current = false;
-      if (!activeSosModalOpen.current) {
-        activeSosModalOpen.current = true;
-        router.push('/active-sos');
-      }
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -163,6 +179,11 @@ export function HomeScreen() {
     const offHazardRemoved = hazardService.on('HAZARD_REMOVED', ({ id }) => {
       setHazards((prev) => prev.filter((item) => item.id !== id));
     });
+    const offResponder = responderService.on('ALERTS_UPDATED', ({ alerts }) => {
+      setResponderAlerts(alerts);
+      setDismissedAlertId(null);
+      setResponderFeedback(null);
+    });
 
     const positionTimer = setInterval(() => {
       locationService
@@ -183,8 +204,11 @@ export function HomeScreen() {
     return () => {
       active = false;
       offSettings();
-      offStarted();
-      offTick();
+      offWarningStarted();
+      offWarningTick();
+      offSosDispatched();
+      offEscalationStarted();
+      offEscalationTick();
       offCancelled();
       offAlert();
       offNetwork();
@@ -194,8 +218,8 @@ export function HomeScreen() {
       offRideEndedWithSummary();
       offHazardAdded();
       offHazardRemoved();
+      offResponder();
       clearInterval(positionTimer);
-      emergencyControllerService.stop();
     };
   }, [router]);
 
@@ -225,6 +249,9 @@ export function HomeScreen() {
     }),
     [currentPosition]
   );
+  const MapViewComponent = mapModules.MapView;
+  const MarkerComponent = mapModules.Marker;
+  const PolylineComponent = mapModules.Polyline;
 
   const fatigueLevel = useMemo(() => {
     const mins = Math.floor(elapsedMs / 60000);
@@ -337,6 +364,20 @@ export function HomeScreen() {
 
     return zones;
   }, [hazards]);
+  const topNearbyAlert = useMemo(() => {
+    const visible = responderAlerts.filter((alert) => alert.alertId !== dismissedAlertId);
+    if (visible.length === 0) {
+      return null;
+    }
+
+    return [...visible].sort((a, b) => {
+      const distanceDiff = a.distanceMeters - b.distanceMeters;
+      if (distanceDiff !== 0) {
+        return distanceDiff;
+      }
+      return b.triggeredAt - a.triggeredAt;
+    })[0];
+  }, [dismissedAlertId, responderAlerts]);
 
   const onToggleRide = () => {
     if (rideSession.state === 'ACTIVE') {
@@ -373,16 +414,87 @@ export function HomeScreen() {
         },
       ]
     );
+    const sent = await emergencyControllerService.triggerManualSos();
+    if (sent) {
+      setControllerState(emergencyControllerService.getState());
+    }
+  };
+
+  const onAcceptNearbyAlert = async (alertId: string) => {
+    setResponderFeedback(null);
+    setIsAcceptingAlert(true);
+    const result = await responderService.acceptAlert(alertId);
+    if (!result.ok) {
+      setResponderFeedback(result.reason ?? 'Unable to accept alert.');
+    }
+    setIsAcceptingAlert(false);
   };
 
   return (
-    <Animated.View style={[styles.container, { opacity: contentFade }]}>
+    <Animated.ScrollView
+      style={[styles.container, { opacity: contentFade }]}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}>
       <View style={styles.topBar}>
         <Text style={styles.riderName}>{riderName}</Text>
         <Animated.View style={{ transform: [{ scale: sosPulse }] }}>
           <StatusBadge variant={networkVariant} />
         </Animated.View>
       </View>
+
+      {topNearbyAlert ? (
+        <View style={styles.nearbyAlertCard}>
+          <Text style={styles.nearbyAlertTitle}>Nearby SOS Alert</Text>
+          <Text style={styles.nearbyAlertMeta}>Victim: {shortDeviceId(topNearbyAlert.victimDeviceId)}</Text>
+          <Text style={styles.nearbyAlertMeta}>Distance: {Math.round(topNearbyAlert.distanceMeters)}m</Text>
+          <Text style={styles.nearbyAlertMeta}>
+            Triggered: {new Date(topNearbyAlert.triggeredAt).toLocaleTimeString()}
+          </Text>
+          <Text style={styles.nearbyAlertMeta}>
+            Location: {topNearbyAlert.location ? 'Available' : 'Unavailable'}
+          </Text>
+          {responderFeedback ? <Text style={styles.nearbyAlertFeedback}>{responderFeedback}</Text> : null}
+          <View style={styles.nearbyAlertActions}>
+            <Pressable
+              style={[styles.nearbyAlertAccept, isAcceptingAlert && styles.nearbyAlertDisabled]}
+              disabled={isAcceptingAlert}
+              onPress={() => {
+                void onAcceptNearbyAlert(topNearbyAlert.alertId);
+              }}>
+              <Text style={styles.nearbyAlertAcceptText}>
+                {isAcceptingAlert ? 'Accepting...' : 'Accept'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.nearbyAlertDismiss}
+              onPress={() => setDismissedAlertId(topNearbyAlert.alertId)}>
+              <Text style={styles.nearbyAlertDismissText}>Dismiss</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {controllerState === 'SOS_DISPATCHED' ||
+      controllerState === 'ESCALATION_COUNTDOWN' ||
+      controllerState === 'ALERT_ESCALATED' ? (
+        <View style={styles.activeSosCard}>
+          {controllerState === 'ALERT_ESCALATED' ? (
+            <>
+              <Text style={styles.activeSosTitle}>Emergency services on the way</Text>
+              <Text style={styles.activeSosMeta}>Emergency has been escalated.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.activeSosTitle}>SOS Sent</Text>
+              <Text style={styles.activeSosMeta}>SOS sent to nearby riders.</Text>
+              <Text style={styles.activeSosMeta}>Escalating in: {escalationRemainingSeconds}s</Text>
+              <Pressable style={styles.activeSosCancelButton} onPress={() => emergencyControllerService.cancel()}>
+                <Text style={styles.activeSosCancelText}>Cancel SOS</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      ) : null}
 
       <View style={styles.mapCard}>
         {mapModules.available && mapModules.MapView && mapModules.Marker ? (
@@ -412,26 +524,31 @@ export function HomeScreen() {
                 ))
               : null}
             {currentPosition ? <mapModules.Marker coordinate={currentPosition} title="You" /> : null}
+        {mapModules.available && MapViewComponent && MarkerComponent ? (
+          <MapViewComponent style={styles.map} initialRegion={mapRegion} region={mapRegion}>
+            {currentPosition ? <MarkerComponent coordinate={currentPosition} title="You" /> : null}
             {hazards.map((hazard) => (
-              <mapModules.Marker
+              <MarkerComponent
                 key={hazard.id}
                 coordinate={{ latitude: hazard.latitude, longitude: hazard.longitude }}
                 pinColor="#F59E0B"
                 title={hazard.type}
               />
             ))}
-            {breadcrumbs.length > 1 && mapModules.Polyline ? (
-              <mapModules.Polyline coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
+            {breadcrumbs.length > 1 && PolylineComponent ? (
+              <PolylineComponent coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
             ) : null}
-            {controllerState === 'ALERT_SENDING' || controllerState === 'ALERT_SENT' ? (
-              <mapModules.Marker
+            {controllerState === 'SOS_DISPATCHED' ||
+            controllerState === 'ESCALATION_COUNTDOWN' ||
+            controllerState === 'ALERT_ESCALATED' ? (
+              <MarkerComponent
                 coordinate={currentPosition ?? mapRegion}
                 pinColor="#EF4444"
                 title="SOS Active"
                 opacity={Math.floor(Date.now() / 500) % 2 === 0 ? 1 : 0.4}
               />
             ) : null}
-          </mapModules.MapView>
+          </MapViewComponent>
         ) : (
           <View style={styles.mapFallback}>
             <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
@@ -479,7 +596,7 @@ export function HomeScreen() {
           <Text style={styles.linkText}>Ride History</Text>
         </Pressable>
       </View>
-    </Animated.View>
+    </Animated.ScrollView>
   );
 }
 
@@ -501,15 +618,22 @@ function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number):
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadius * c;
+function shortDeviceId(value: string): string {
+  if (value.length <= 12) {
+    return value;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#030712',
+  },
+  content: {
     paddingHorizontal: 14,
     paddingTop: 28,
-    paddingBottom: 52,
+    paddingBottom: 96,
     gap: 12,
   },
   topBar: {
@@ -520,6 +644,91 @@ const styles = StyleSheet.create({
   riderName: {
     color: '#FFFFFF',
     fontSize: 22,
+    fontWeight: '800',
+  },
+  nearbyAlertCard: {
+    backgroundColor: '#1F2937',
+    borderColor: '#EF4444',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  nearbyAlertTitle: {
+    color: '#FEE2E2',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  nearbyAlertMeta: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  nearbyAlertFeedback: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  nearbyAlertActions: {
+    marginTop: 6,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  nearbyAlertAccept: {
+    flex: 1,
+    backgroundColor: '#16A34A',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  nearbyAlertAcceptText: {
+    color: '#ECFDF5',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  nearbyAlertDismiss: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#6B7280',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  nearbyAlertDismissText: {
+    color: '#D1D5DB',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  nearbyAlertDisabled: {
+    opacity: 0.7,
+  },
+  activeSosCard: {
+    backgroundColor: '#7F1D1D',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  activeSosTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  activeSosMeta: {
+    color: '#FEE2E2',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  activeSosCancelButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  activeSosCancelText: {
+    color: '#7F1D1D',
+    fontSize: 13,
     fontWeight: '800',
   },
   mapCard: {

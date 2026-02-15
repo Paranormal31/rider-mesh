@@ -1,4 +1,5 @@
 export { alarmAudioService } from './alarmAudioService';
+export { appRuntimeService } from './appRuntimeService';
 export { crashDetectionService } from './crashDetectionService';
 export type {
   CrashDetectedEvent,
@@ -21,8 +22,10 @@ export { emergencyControllerService } from './emergencyControllerService';
 export type { EmergencyContact } from './emergencyContactsService';
 export type {
   EmergencyControllerLocationPayload,
+  ResponderAssignedEvent,
   EmergencyControllerState,
 } from './emergencyControllerService';
+export { deviceIdentityService } from './deviceIdentityService';
 export { locationService } from './locationService';
 export { networkMeshService } from './networkMeshService';
 export type { NetworkMeshStatus } from './networkMeshService';
@@ -33,7 +36,12 @@ export { profileService } from './profileService';
 export type { SaveProfileInput, UserProfile } from './profileService';
 export { rideSessionService } from './rideSessionService';
 export type { RideSession, RideSessionState, RideSummary } from './rideSessionService';
+export { responderService } from './responderService';
+export type { ResponderAlert } from './responderService';
+export { riderHeartbeatService } from './riderHeartbeatService';
 export { settingsService } from './settingsService';
+export { socketService } from './socketService';
+export type { AlertAssignedEvent, AlertCancelledEvent, NearbyAlertEvent } from './socketService';
 export type {
   CountdownDurationSeconds,
   DetectionSensitivity,

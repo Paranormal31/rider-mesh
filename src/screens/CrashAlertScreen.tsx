@@ -7,10 +7,9 @@ import { emergencyControllerService, type EmergencyControllerState } from '@/src
 export function CrashAlertScreen() {
   const router = useRouter();
   const [remainingSeconds, setRemainingSeconds] = useState(
-    emergencyControllerService.getCountdownRemainingSeconds()
+    emergencyControllerService.getWarningRemainingSeconds()
   );
   const [state, setState] = useState<EmergencyControllerState>(emergencyControllerService.getState());
-  const [isSendingNow, setIsSendingNow] = useState(false);
   const countdownScale = useRef(new Animated.Value(1)).current;
   const closeScreen = useCallback(() => {
     if (router.canGoBack()) {
@@ -21,26 +20,32 @@ export function CrashAlertScreen() {
   }, [router]);
 
   useEffect(() => {
-    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setState('COUNTDOWN_ACTIVE');
+    const offWarningStarted = emergencyControllerService.on('WARNING_STARTED', (event) => {
+      setState('WARNING_COUNTDOWN');
       setRemainingSeconds(event.remainingSeconds);
     });
-    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', (event) => {
-      setState('COUNTDOWN_ACTIVE');
+    const offWarningTick = emergencyControllerService.on('WARNING_TICK', (event) => {
+      setState('WARNING_COUNTDOWN');
       setRemainingSeconds(event.remainingSeconds);
+    });
+    const offDispatched = emergencyControllerService.on('SOS_DISPATCHED', () => {
+      setState('SOS_DISPATCHED');
+      router.replace('/(tabs)');
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('MONITORING');
       closeScreen();
+      setState('ALERT_CANCELLED');
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
-      setState('ALERT_SENT');
-      router.replace('/active-sos');
+      setState('ALERT_ESCALATED');
+      setRemainingSeconds(0);
     });
 
     return () => {
-      offStarted();
-      offTick();
+      offWarningStarted();
+      offWarningTick();
+      offDispatched();
       offCancelled();
       offAlert();
     };
@@ -49,43 +54,35 @@ export function CrashAlertScreen() {
   useEffect(() => {
     if (state !== 'COUNTDOWN_ACTIVE' && state !== 'CRASH_DETECTED') {
       closeScreen();
+    if (state === 'NORMAL' || state === 'ALERT_CANCELLED') {
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(tabs)');
+      }
     }
   }, [closeScreen, state]);
 
   useEffect(() => {
-    if (state === 'COUNTDOWN_ACTIVE' && remainingSeconds <= 0) {
-      router.replace('/active-sos');
+    if (state !== 'WARNING_COUNTDOWN') {
+      return;
     }
-  }, [remainingSeconds, router, state]);
-
-  useEffect(() => {
     Animated.sequence([
       Animated.timing(countdownScale, { toValue: 1.08, duration: 180, useNativeDriver: true }),
       Animated.timing(countdownScale, { toValue: 1, duration: 180, useNativeDriver: true }),
     ]).start();
-  }, [countdownScale, remainingSeconds]);
+  }, [countdownScale, remainingSeconds, state]);
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>CRASH DETECTED</Text>
-      <Text style={styles.subtitle}>Sending SOS in:</Text>
+      <Text style={styles.subtitle}>SOS will be sent to nearby riders</Text>
+      <Text style={styles.meta}>Sending SOS in:</Text>
       <Animated.Text style={[styles.countdown, { transform: [{ scale: countdownScale }] }]}>
         {Math.max(remainingSeconds, 0)}
       </Animated.Text>
-      <Pressable
-        style={styles.cancelButton}
-        onPress={() => emergencyControllerService.cancel()}
-        disabled={isSendingNow}>
+      <Pressable style={styles.cancelButton} onPress={() => emergencyControllerService.cancel()}>
         <Text style={styles.cancelText}>I AM SAFE - CANCEL</Text>
-      </Pressable>
-      <Pressable
-        style={[styles.sendNowButton, isSendingNow && styles.sendNowDisabled]}
-        onPress={() => {
-          setIsSendingNow(true);
-          emergencyControllerService.sendAlertNow().finally(() => setIsSendingNow(false));
-        }}
-        disabled={isSendingNow}>
-        <Text style={styles.sendNowText}>{isSendingNow ? 'Sending...' : 'Send Now'}</Text>
       </Pressable>
     </View>
   );
@@ -110,6 +107,12 @@ const styles = StyleSheet.create({
     color: '#FEE2E2',
     fontSize: 18,
     fontWeight: '700',
+    textAlign: 'center',
+  },
+  meta: {
+    color: '#FECACA',
+    fontSize: 16,
+    fontWeight: '600',
   },
   countdown: {
     color: '#FFFFFF',
@@ -128,20 +131,5 @@ const styles = StyleSheet.create({
     color: '#7F1D1D',
     fontSize: 16,
     fontWeight: '900',
-  },
-  sendNowButton: {
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    borderRadius: 12,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-  },
-  sendNowDisabled: {
-    opacity: 0.6,
-  },
-  sendNowText: {
-    color: '#FEE2E2',
-    fontSize: 16,
-    fontWeight: '800',
   },
 });

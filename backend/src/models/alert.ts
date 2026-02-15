@@ -1,6 +1,11 @@
 import mongoose, { Schema, type InferSchemaType } from 'mongoose';
 
-import type { AlertRecord, AlertStatus, CreateAlertPersistenceInput } from '../types/alert';
+import type {
+  AcceptAlertFailureCode,
+  AlertRecord,
+  AlertStatus,
+  CreateAlertPersistenceInput,
+} from '../types/alert';
 import { ALERT_STATUSES } from '../types/alert';
 
 const breadcrumbPointSchema = new Schema(
@@ -46,6 +51,17 @@ const alertSchema = new Schema(
       required: false,
       default: null,
     },
+    responderDeviceId: {
+      type: String,
+      required: false,
+      default: null,
+      trim: true,
+    },
+    assignedAt: {
+      type: Number,
+      required: false,
+      default: null,
+    },
     createdAt: { type: Number, required: true },
     updatedAt: { type: Number, required: true },
   },
@@ -60,6 +76,11 @@ type AlertDocument = InferSchemaType<typeof alertSchema> & {
   _id: mongoose.Types.ObjectId;
   status: AlertStatus;
 };
+
+export type AlertStatusTransitionResult =
+  | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+  | { kind: 'not_found' }
+  | { kind: 'blocked'; currentStatus: AlertStatus };
 
 const AlertModel =
   (mongoose.models.Alert as mongoose.Model<AlertDocument> | undefined) ??
@@ -83,6 +104,8 @@ function mapAlertDocument(document: AlertDocument): AlertRecord {
           })),
         }
       : null,
+    responderDeviceId: document.responderDeviceId ?? null,
+    assignedAt: document.assignedAt ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
@@ -94,9 +117,124 @@ export async function createAlertRecord(input: CreateAlertPersistenceInput): Pro
   const document = await AlertModel.create({
     ...input,
     location: input.location,
+    responderDeviceId: null,
+    assignedAt: null,
     createdAt: nowMs,
     updatedAt: nowMs,
   });
 
   return mapAlertDocument(document.toObject() as AlertDocument);
+}
+
+export type AcceptAlertRecordResult =
+  | { ok: true; record: AlertRecord }
+  | { ok: false; code: AcceptAlertFailureCode; record: AlertRecord | null };
+
+const CLAIMABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+
+export async function acceptAlertRecord(input: {
+  alertId: string;
+  responderDeviceId: string;
+  assignedAt: number;
+}): Promise<AcceptAlertRecordResult> {
+  if (!mongoose.isValidObjectId(input.alertId)) {
+    return {
+      ok: false,
+      code: 'ALERT_NOT_FOUND',
+      record: null,
+    };
+  }
+
+  const updated = await AlertModel.findOneAndUpdate(
+    {
+      _id: input.alertId,
+      status: { $in: CLAIMABLE_STATUSES },
+      responderDeviceId: null,
+    },
+    {
+      $set: {
+        responderDeviceId: input.responderDeviceId,
+        assignedAt: input.assignedAt,
+        status: 'RESPONDER_ASSIGNED',
+        updatedAt: Date.now(),
+      },
+    },
+    { new: true }
+  ).lean<AlertDocument | null>();
+
+  if (updated) {
+    return {
+      ok: true,
+      record: mapAlertDocument(updated),
+    };
+  }
+
+  const existing = await AlertModel.findById(input.alertId).lean<AlertDocument | null>();
+  if (!existing) {
+    return {
+      ok: false,
+      code: 'ALERT_NOT_FOUND',
+      record: null,
+    };
+  }
+
+  if (existing.responderDeviceId) {
+    return {
+      ok: false,
+      code: 'ALERT_ALREADY_ASSIGNED',
+      record: mapAlertDocument(existing),
+    };
+  }
+
+  return {
+    ok: false,
+    code: 'ALERT_NOT_CLAIMABLE',
+    record: mapAlertDocument(existing),
+  };
+}
+
+const CANCELLABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+const ESCALATABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+
+export async function updateAlertStatusRecord(input: {
+  alertId: string;
+  status: 'CANCELLED' | 'ESCALATED';
+}): Promise<AlertStatusTransitionResult> {
+  if (!mongoose.isValidObjectId(input.alertId)) {
+    return { kind: 'not_found' };
+  }
+
+  const existing = await AlertModel.findById(input.alertId).lean<AlertDocument | null>();
+  if (!existing) {
+    return { kind: 'not_found' };
+  }
+
+  const canTransition =
+    input.status === 'CANCELLED'
+      ? CANCELLABLE_STATUSES.includes(existing.status)
+      : ESCALATABLE_STATUSES.includes(existing.status);
+
+  if (!canTransition) {
+    return { kind: 'blocked', currentStatus: existing.status };
+  }
+
+  const updatedAt = Date.now();
+  await AlertModel.updateOne(
+    { _id: input.alertId },
+    {
+      $set: {
+        status: input.status,
+        updatedAt,
+      },
+    }
+  );
+
+  return {
+    kind: 'updated',
+    data: {
+      id: input.alertId,
+      status: input.status,
+      updatedAt,
+    },
+  };
 }
