@@ -7,23 +7,23 @@ import { emergencyControllerService, type EmergencyControllerState } from '@/src
 export function CrashAlertScreen() {
   const router = useRouter();
   const [remainingSeconds, setRemainingSeconds] = useState(
-    emergencyControllerService.getCountdownRemainingSeconds()
+    emergencyControllerService.getWarningRemainingSeconds()
   );
   const [state, setState] = useState<EmergencyControllerState>(emergencyControllerService.getState());
   const countdownScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    const offPreDelay = emergencyControllerService.on('PRE_DELAY_STARTED', () => {
-      setState('ALERT_PRE_DELAY');
-      setRemainingSeconds(0);
-    });
-    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setState('ALERT_PENDING');
+    const offWarningStarted = emergencyControllerService.on('WARNING_STARTED', (event) => {
+      setState('WARNING_COUNTDOWN');
       setRemainingSeconds(event.remainingSeconds);
     });
-    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', (event) => {
-      setState('ALERT_PENDING');
+    const offWarningTick = emergencyControllerService.on('WARNING_TICK', (event) => {
+      setState('WARNING_COUNTDOWN');
       setRemainingSeconds(event.remainingSeconds);
+    });
+    const offDispatched = emergencyControllerService.on('SOS_DISPATCHED', () => {
+      setState('SOS_DISPATCHED');
+      router.replace('/(tabs)');
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('ALERT_CANCELLED');
@@ -34,9 +34,9 @@ export function CrashAlertScreen() {
     });
 
     return () => {
-      offPreDelay();
-      offStarted();
-      offTick();
+      offWarningStarted();
+      offWarningTick();
+      offDispatched();
       offCancelled();
       offAlert();
     };
@@ -53,7 +53,7 @@ export function CrashAlertScreen() {
   }, [router, state]);
 
   useEffect(() => {
-    if (state !== 'ALERT_PENDING') {
+    if (state !== 'WARNING_COUNTDOWN') {
       return;
     }
     Animated.sequence([
@@ -62,31 +62,14 @@ export function CrashAlertScreen() {
     ]).start();
   }, [countdownScale, remainingSeconds, state]);
 
-  if (state === 'ALERT_ESCALATED') {
-    return (
-      <View style={[styles.container, styles.escalatedContainer]}>
-        <Text style={styles.title}>EMERGENCY ESCALATED</Text>
-        <Text style={styles.escalatedMessage}>Emergency services on the way</Text>
-      </View>
-    );
-  }
-
-  const isPending = state === 'ALERT_PENDING';
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>CRASH DETECTED</Text>
-      {isPending ? (
-        <>
-          <Text style={styles.subtitle}>Nearby rider alerted</Text>
-          <Text style={styles.meta}>Sending SOS in:</Text>
-          <Animated.Text style={[styles.countdown, { transform: [{ scale: countdownScale }] }]}>
-            {Math.max(remainingSeconds, 0)}
-          </Animated.Text>
-        </>
-      ) : (
-        <Text style={styles.meta}>Monitoring crash impact...</Text>
-      )}
+      <Text style={styles.subtitle}>SOS will be sent to nearby riders</Text>
+      <Text style={styles.meta}>Sending SOS in:</Text>
+      <Animated.Text style={[styles.countdown, { transform: [{ scale: countdownScale }] }]}>
+        {Math.max(remainingSeconds, 0)}
+      </Animated.Text>
       <Pressable style={styles.cancelButton} onPress={() => emergencyControllerService.cancel()}>
         <Text style={styles.cancelText}>I AM SAFE - CANCEL</Text>
       </Pressable>
@@ -103,9 +86,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
   },
-  escalatedContainer: {
-    backgroundColor: '#7F1D1D',
-  },
   title: {
     color: '#FFFFFF',
     fontSize: 44,
@@ -116,6 +96,7 @@ const styles = StyleSheet.create({
     color: '#FEE2E2',
     fontSize: 18,
     fontWeight: '700',
+    textAlign: 'center',
   },
   meta: {
     color: '#FECACA',
@@ -139,16 +120,5 @@ const styles = StyleSheet.create({
     color: '#7F1D1D',
     fontSize: 16,
     fontWeight: '900',
-  },
-  escalatedMessage: {
-    color: '#FEE2E2',
-    fontSize: 24,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  errorText: {
-    color: '#FEE2E2',
-    fontSize: 13,
-    fontWeight: '700',
   },
 });

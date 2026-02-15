@@ -1,7 +1,12 @@
 import { alertAcceptApiUrl } from '@/src/config/api';
 
 import { deviceIdentityService } from './deviceIdentityService';
-import { socketService, type AlertAssignedEvent, type NearbyAlertEvent } from './socketService';
+import {
+  socketService,
+  type AlertAssignedEvent,
+  type AlertCancelledEvent,
+  type NearbyAlertEvent,
+} from './socketService';
 
 export type ResponderAlert = NearbyAlertEvent;
 
@@ -21,6 +26,7 @@ class ResponderService {
   private started = false;
   private offNearby: (() => void) | null = null;
   private offAssigned: (() => void) | null = null;
+  private offCancelled: (() => void) | null = null;
 
   async start(): Promise<void> {
     if (this.started) {
@@ -34,6 +40,9 @@ class ResponderService {
     this.offAssigned = socketService.on('alert:assigned', (event) => {
       this.handleAssigned(event);
     });
+    this.offCancelled = socketService.on('alert:cancelled', (event) => {
+      this.handleCancelled(event);
+    });
     this.started = true;
   }
 
@@ -42,6 +51,8 @@ class ResponderService {
     this.offNearby = null;
     this.offAssigned?.();
     this.offAssigned = null;
+    this.offCancelled?.();
+    this.offCancelled = null;
     this.started = false;
   }
 
@@ -114,6 +125,10 @@ class ResponderService {
   }
 
   private handleAssigned(event: AlertAssignedEvent): void {
+    this.removeAlert(event.alertId);
+  }
+
+  private handleCancelled(event: AlertCancelledEvent): void {
     this.removeAlert(event.alertId);
   }
 

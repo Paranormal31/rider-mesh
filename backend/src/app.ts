@@ -13,6 +13,14 @@ import type { RiderPresenceRecord } from './types/rider';
 interface CreateAppDeps {
   getDbHealth: () => DatabaseHealth;
   createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
+  updateAlertStatus?: (
+    alertId: string,
+    status: 'CANCELLED' | 'ESCALATED'
+  ) => Promise<
+    | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+    | { kind: 'not_found' }
+    | { kind: 'blocked'; currentStatus: AlertRecord['status'] }
+  >;
   acceptAlert?: (input: {
     alertId: string;
     responderDeviceId: string;
@@ -29,6 +37,11 @@ interface CreateAppDeps {
   }) => Promise<RiderPresenceRecord>;
   onAlertCreated?: (alert: AlertRecord) => Promise<void> | void;
   onAlertAssigned?: (alert: AlertRecord) => Promise<void> | void;
+  onAlertStatusUpdated?: (input: {
+    alertId: string;
+    status: 'CANCELLED' | 'ESCALATED';
+    updatedAt: number;
+  }) => Promise<void> | void;
   now: () => Date;
   uptimeSec: () => number;
   corsOrigins: string[];
@@ -37,10 +50,12 @@ interface CreateAppDeps {
 export function createApp({
   getDbHealth,
   createAlert,
+  updateAlertStatus,
   acceptAlert,
   upsertHeartbeat,
   onAlertCreated,
   onAlertAssigned,
+  onAlertStatusUpdated,
   now,
   uptimeSec,
   corsOrigins,
@@ -76,6 +91,11 @@ export function createApp({
       code: 'ALERT_NOT_CLAIMABLE' as const,
       record: null,
     }));
+  const updateAlertStatusImpl =
+    updateAlertStatus ??
+    (async () => ({
+      kind: 'not_found' as const,
+    }));
   const upsertHeartbeatImpl =
     upsertHeartbeat ??
     (async () => ({
@@ -95,9 +115,11 @@ export function createApp({
     createAlertsRouter({
       nowMs: () => now().getTime(),
       createAlert,
+      updateAlertStatus: updateAlertStatusImpl,
       acceptAlert: acceptAlertImpl,
       onAlertCreated,
       onAlertAssigned,
+      onAlertStatusUpdated,
     })
   );
   app.use(

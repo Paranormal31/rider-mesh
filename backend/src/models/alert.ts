@@ -192,3 +192,49 @@ export async function acceptAlertRecord(input: {
     record: mapAlertDocument(existing),
   };
 }
+
+const CANCELLABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+const ESCALATABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+
+export async function updateAlertStatusRecord(input: {
+  alertId: string;
+  status: 'CANCELLED' | 'ESCALATED';
+}): Promise<AlertStatusTransitionResult> {
+  if (!mongoose.isValidObjectId(input.alertId)) {
+    return { kind: 'not_found' };
+  }
+
+  const existing = await AlertModel.findById(input.alertId).lean<AlertDocument | null>();
+  if (!existing) {
+    return { kind: 'not_found' };
+  }
+
+  const canTransition =
+    input.status === 'CANCELLED'
+      ? CANCELLABLE_STATUSES.includes(existing.status)
+      : ESCALATABLE_STATUSES.includes(existing.status);
+
+  if (!canTransition) {
+    return { kind: 'blocked', currentStatus: existing.status };
+  }
+
+  const updatedAt = Date.now();
+  await AlertModel.updateOne(
+    { _id: input.alertId },
+    {
+      $set: {
+        status: input.status,
+        updatedAt,
+      },
+    }
+  );
+
+  return {
+    kind: 'updated',
+    data: {
+      id: input.alertId,
+      status: input.status,
+      updatedAt,
+    },
+  };
+}

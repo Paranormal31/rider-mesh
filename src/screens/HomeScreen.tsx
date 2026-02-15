@@ -54,6 +54,9 @@ export function HomeScreen() {
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Position[]>([]);
   const [controllerState, setControllerState] = useState(emergencyControllerService.getState());
+  const [escalationRemainingSeconds, setEscalationRemainingSeconds] = useState(
+    emergencyControllerService.getEscalationRemainingSeconds()
+  );
   const [responderAlerts, setResponderAlerts] = useState<ResponderAlert[]>(responderService.getAlerts());
   const [dismissedAlertId, setDismissedAlertId] = useState<string | null>(null);
   const [responderFeedback, setResponderFeedback] = useState<string | null>(null);
@@ -103,33 +106,38 @@ export function HomeScreen() {
     const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
       crashDetectionService.applySensitivity(settings.sensitivity);
     });
-    const offPreDelay = emergencyControllerService.on('PRE_DELAY_STARTED', () => {
-      setControllerState('ALERT_PRE_DELAY');
+    const offWarningStarted = emergencyControllerService.on('WARNING_STARTED', () => {
+      setControllerState('WARNING_COUNTDOWN');
       if (!crashModalOpen.current) {
         crashModalOpen.current = true;
-        activeSosModalOpen.current = false;
-        router.push('/crash-alert');
+        router.replace('/crash-alert');
       }
     });
-    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setControllerState('ALERT_PENDING');
-      if (!crashModalOpen.current) {
-        crashModalOpen.current = true;
-        router.push('/crash-alert');
-      }
-      setElapsedMs(rideSessionService.getElapsedMs() + event.remainingSeconds);
+    const offWarningTick = emergencyControllerService.on('WARNING_TICK', () => {
+      setControllerState('WARNING_COUNTDOWN');
     });
-    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', () => {
-      setControllerState('ALERT_PENDING');
+    const offSosDispatched = emergencyControllerService.on('SOS_DISPATCHED', () => {
+      setControllerState(emergencyControllerService.getState());
+      setEscalationRemainingSeconds(emergencyControllerService.getEscalationRemainingSeconds());
+      crashModalOpen.current = false;
+    });
+    const offEscalationStarted = emergencyControllerService.on('ESCALATION_COUNTDOWN_STARTED', (event) => {
+      setControllerState('ESCALATION_COUNTDOWN');
+      setEscalationRemainingSeconds(event.remainingSeconds);
+    });
+    const offEscalationTick = emergencyControllerService.on('ESCALATION_COUNTDOWN_TICK', (event) => {
+      setControllerState('ESCALATION_COUNTDOWN');
+      setEscalationRemainingSeconds(event.remainingSeconds);
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setControllerState('NORMAL');
+      setEscalationRemainingSeconds(0);
       crashModalOpen.current = false;
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setControllerState(emergencyControllerService.getState());
-      crashModalOpen.current = true;
-      activeSosModalOpen.current = false;
+      setEscalationRemainingSeconds(0);
+      crashModalOpen.current = false;
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -179,9 +187,11 @@ export function HomeScreen() {
     return () => {
       active = false;
       offSettings();
-      offPreDelay();
-      offStarted();
-      offTick();
+      offWarningStarted();
+      offWarningTick();
+      offSosDispatched();
+      offEscalationStarted();
+      offEscalationTick();
       offCancelled();
       offAlert();
       offNetwork();
@@ -193,7 +203,6 @@ export function HomeScreen() {
       offHazardRemoved();
       offResponder();
       clearInterval(positionTimer);
-      emergencyControllerService.stop();
     };
   }, [router]);
 
@@ -223,6 +232,9 @@ export function HomeScreen() {
     }),
     [currentPosition]
   );
+  const MapViewComponent = mapModules.MapView;
+  const MarkerComponent = mapModules.Marker;
+  const PolylineComponent = mapModules.Polyline;
 
   const fatigueLevel = useMemo(() => {
     const mins = Math.floor(elapsedMs / 60000);
@@ -341,42 +353,54 @@ export function HomeScreen() {
         </View>
       ) : null}
 
-      {controllerState === 'ALERT_SENDING' || controllerState === 'ALERT_SENT' ? (
+      {controllerState === 'SOS_DISPATCHED' ||
+      controllerState === 'ESCALATION_COUNTDOWN' ||
+      controllerState === 'ALERT_ESCALATED' ? (
         <View style={styles.activeSosCard}>
-          <Text style={styles.activeSosTitle}>SOS Sent</Text>
-          <Text style={styles.activeSosMeta}>Emergency alert is active. You can cancel if you are safe.</Text>
-          <Pressable style={styles.activeSosCancelButton} onPress={() => emergencyControllerService.cancel()}>
-            <Text style={styles.activeSosCancelText}>Cancel SOS</Text>
-          </Pressable>
+          {controllerState === 'ALERT_ESCALATED' ? (
+            <>
+              <Text style={styles.activeSosTitle}>Emergency services on the way</Text>
+              <Text style={styles.activeSosMeta}>Emergency has been escalated.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.activeSosTitle}>SOS Sent</Text>
+              <Text style={styles.activeSosMeta}>SOS sent to nearby riders.</Text>
+              <Text style={styles.activeSosMeta}>Escalating in: {escalationRemainingSeconds}s</Text>
+              <Pressable style={styles.activeSosCancelButton} onPress={() => emergencyControllerService.cancel()}>
+                <Text style={styles.activeSosCancelText}>Cancel SOS</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       ) : null}
 
       <View style={styles.mapCard}>
-        {mapModules.available && mapModules.MapView && mapModules.Marker ? (
-          <mapModules.MapView style={styles.map} initialRegion={mapRegion} region={mapRegion}>
-            {currentPosition ? <mapModules.Marker coordinate={currentPosition} title="You" /> : null}
+        {mapModules.available && MapViewComponent && MarkerComponent ? (
+          <MapViewComponent style={styles.map} initialRegion={mapRegion} region={mapRegion}>
+            {currentPosition ? <MarkerComponent coordinate={currentPosition} title="You" /> : null}
             {hazards.map((hazard) => (
-              <mapModules.Marker
+              <MarkerComponent
                 key={hazard.id}
                 coordinate={{ latitude: hazard.latitude, longitude: hazard.longitude }}
                 pinColor="#F59E0B"
                 title={hazard.type}
               />
             ))}
-            {breadcrumbs.length > 1 && mapModules.Polyline ? (
-              <mapModules.Polyline coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
+            {breadcrumbs.length > 1 && PolylineComponent ? (
+              <PolylineComponent coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
             ) : null}
-            {controllerState === 'ALERT_PRE_DELAY' ||
-            controllerState === 'ALERT_PENDING' ||
+            {controllerState === 'SOS_DISPATCHED' ||
+            controllerState === 'ESCALATION_COUNTDOWN' ||
             controllerState === 'ALERT_ESCALATED' ? (
-              <mapModules.Marker
+              <MarkerComponent
                 coordinate={currentPosition ?? mapRegion}
                 pinColor="#EF4444"
                 title="SOS Active"
                 opacity={Math.floor(Date.now() / 500) % 2 === 0 ? 1 : 0.4}
               />
             ) : null}
-          </mapModules.MapView>
+          </MapViewComponent>
         ) : (
           <View style={styles.mapFallback}>
             <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>

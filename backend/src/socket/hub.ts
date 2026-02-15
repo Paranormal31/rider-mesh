@@ -86,4 +86,19 @@ export class SocketHub {
     this.io.to(deviceRoom(alert.deviceId)).emit('alert:assigned', payload);
     this.io.to(deviceRoom(alert.responderDeviceId)).emit('alert:assigned', payload);
   }
+
+  emitAlertCancelled(input: { alertId: string; cancelledAt: number }): void {
+    if (!this.io) {
+      return;
+    }
+
+    console.log('[socket] emit alert:cancelled', {
+      alertId: input.alertId,
+      cancelledAt: input.cancelledAt,
+    });
+    this.io.emit('alert:cancelled', {
+      alertId: input.alertId,
+      cancelledAt: input.cancelledAt,
+    });
+  }
 }

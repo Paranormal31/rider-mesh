@@ -41,7 +41,7 @@ export type { ResponderAlert } from './responderService';
 export { riderHeartbeatService } from './riderHeartbeatService';
 export { settingsService } from './settingsService';
 export { socketService } from './socketService';
-export type { AlertAssignedEvent, NearbyAlertEvent } from './socketService';
+export type { AlertAssignedEvent, AlertCancelledEvent, NearbyAlertEvent } from './socketService';
 export type {
   CountdownDurationSeconds,
   DetectionSensitivity,

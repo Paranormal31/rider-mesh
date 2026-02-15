@@ -7,3 +7,7 @@ export const RIDER_HEARTBEAT_API_URL = `${BASE_URL}/api/v1/riders/heartbeat`;
 export function alertAcceptApiUrl(alertId: string): string {
   return `${ALERTS_API_URL}/${alertId}/accept`;
 }
+
+export function buildAlertStatusApiUrl(alertId: string): string {
+  return `${ALERTS_API_URL}/${alertId}/status`;
+}

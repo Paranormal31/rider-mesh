@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 
 import { createApp } from './app';
 import { connectToDatabase, disconnectFromDatabase, readDbHealth } from './config/db';
-import { acceptAlertRecord, createAlertRecord } from './models/alert';
+import { acceptAlertRecord, createAlertRecord, updateAlertStatusRecord } from './models/alert';
 import { listActiveRiders, upsertRiderHeartbeat } from './models/rider';
 import { findNearbyRidersForAlert } from './services/dispatchService';
 import { SocketHub } from './socket/hub';
@@ -46,6 +46,7 @@ async function bootstrap(): Promise<void> {
   const app = createApp({
     getDbHealth: readDbHealth,
     createAlert: createAlertRecord,
+    updateAlertStatus: (alertId, status) => updateAlertStatusRecord({ alertId, status }),
     acceptAlert: acceptAlertRecord,
     upsertHeartbeat: upsertRiderHeartbeat,
     onAlertCreated: async (alert) => {
@@ -69,6 +70,14 @@ async function bootstrap(): Promise<void> {
     },
     onAlertAssigned: (alert) => {
       socketHub.emitAlertAssigned(alert);
+    },
+    onAlertStatusUpdated: (input) => {
+      if (input.status === 'CANCELLED') {
+        socketHub.emitAlertCancelled({
+          alertId: input.alertId,
+          cancelledAt: input.updatedAt,
+        });
+      }
     },
     now: () => new Date(),
     uptimeSec: processUptimeSec,

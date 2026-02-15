@@ -20,9 +20,15 @@ export type AlertAssignedEvent = {
   assignedAt: number;
 };
 
+export type AlertCancelledEvent = {
+  alertId: string;
+  cancelledAt: number;
+};
+
 type SocketEventMap = {
   'alert:new_nearby': NearbyAlertEvent;
   'alert:assigned': AlertAssignedEvent;
+  'alert:cancelled': AlertCancelledEvent;
 };
 
 class SocketService {
