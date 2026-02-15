@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -12,6 +12,13 @@ export function CrashAlertScreen() {
   const [state, setState] = useState<EmergencyControllerState>(emergencyControllerService.getState());
   const [isSendingNow, setIsSendingNow] = useState(false);
   const countdownScale = useRef(new Animated.Value(1)).current;
+  const closeScreen = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)');
+  }, [router]);
 
   useEffect(() => {
     const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
@@ -24,9 +31,7 @@ export function CrashAlertScreen() {
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('MONITORING');
-      if (router.canGoBack()) {
-        router.back();
-      }
+      closeScreen();
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setState('ALERT_SENT');
@@ -39,15 +44,13 @@ export function CrashAlertScreen() {
       offCancelled();
       offAlert();
     };
-  }, [router]);
+  }, [closeScreen, router]);
 
   useEffect(() => {
     if (state !== 'COUNTDOWN_ACTIVE' && state !== 'CRASH_DETECTED') {
-      if (router.canGoBack()) {
-        router.back();
-      }
+      closeScreen();
     }
-  }, [router, state]);
+  }, [closeScreen, state]);
 
   useEffect(() => {
     if (state === 'COUNTDOWN_ACTIVE' && remainingSeconds <= 0) {

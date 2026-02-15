@@ -1,5 +1,6 @@
 import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusBadge } from '@/src/components/ui';
@@ -27,7 +28,18 @@ type MapModules = {
 };
 
 function loadMapModules(): MapModules {
+  // Expo Go may not include react-native-maps native module in this build.
+  if (Constants.appOwnership === 'expo') {
+    return { available: false };
+  }
+
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { NativeModules } = require('react-native');
+    if (!NativeModules?.RNMapsAirModule && !NativeModules?.AirMapModule) {
+      return { available: false };
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const maps = require('react-native-maps');
     return {
