@@ -67,6 +67,7 @@ class EmergencyControllerService {
   private settingsUnsubscribe: (() => void) | null = null;
   private running = false;
   private reentryLockedUntilMs = 0;
+  private lastAlertEvent: AlertTriggeredEvent | null = null;
   private listeners: {
     [K in keyof EmergencyControllerEventMap]: Set<EmergencyControllerListener<K>>;
   } = {
@@ -136,8 +137,21 @@ class EmergencyControllerService {
     return this.countdownRemainingSeconds;
   }
 
+  getCountdownStartedAtMs(): number | null {
+    return this.countdownStartedAtMs;
+  }
+
+  getLastAlertEvent(): AlertTriggeredEvent | null {
+    return this.lastAlertEvent ? { ...this.lastAlertEvent } : null;
+  }
+
   cancel(): void {
-    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+    if (
+      this.state !== 'COUNTDOWN_ACTIVE' &&
+      this.state !== 'CRASH_DETECTED' &&
+      this.state !== 'ALERT_SENDING' &&
+      this.state !== 'ALERT_SENT'
+    ) {
       return;
     }
 
@@ -146,6 +160,7 @@ class EmergencyControllerService {
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.reentryLockedUntilMs = 0;
     this.emit('CANCELLED', {
       type: 'CANCELLED',
       cancelledAt: Date.now(),
@@ -183,6 +198,32 @@ class EmergencyControllerService {
     this.startCountdown(settings.countdownDurationSeconds);
   }
 
+  async sendAlertNow(): Promise<boolean> {
+    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+      return false;
+    }
+
+    this.clearCountdownTimer();
+    this.countdownRemainingSeconds = 0;
+    await this.triggerAlert();
+    return true;
+  }
+
+  async triggerManualSos(): Promise<boolean> {
+    if (!this.running) {
+      return false;
+    }
+    if (this.state === 'ALERT_SENDING' || this.state === 'ALERT_SENT') {
+      return false;
+    }
+
+    this.clearCountdownTimer();
+    this.countdownRemainingSeconds = 0;
+    this.countdownStartedAtMs = null;
+    await this.triggerAlert();
+    return true;
+  }
+
   private startCountdown(seconds: number): void {
     this.clearCountdownTimer();
     this.state = 'COUNTDOWN_ACTIVE';
@@ -215,26 +256,52 @@ class EmergencyControllerService {
     const now = Date.now();
     const settings = settingsService.getSettings();
     this.state = 'ALERT_SENDING';
-    const location = await this.buildAlertLocationPayload();
-
-    const payload = {
-      deviceId: DEFAULT_DEVICE_ID,
-      status: 'TRIGGERED' as const,
-      triggeredAt: now,
-      location,
-    };
-
-    await this.sendAlertRequest(payload);
-
-    this.emit('ALERT_TRIGGERED', {
+    const immediateLocation = this.buildImmediateLocationPayload();
+    const eventPayload: AlertTriggeredEvent = {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
       alarmSoundEnabled: settings.alarmSoundEnabled,
-      location,
-    });
+      location: immediateLocation,
+    };
+    this.lastAlertEvent = eventPayload;
+    this.emit('ALERT_TRIGGERED', eventPayload);
     this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
     alarmAudioService.stop();
+
+    void this.sendAlertInBackground(now, immediateLocation);
+  }
+
+  private buildImmediateLocationPayload(): EmergencyControllerLocationPayload | null {
+    const includeBreadcrumbs = settingsService.getSettings().breadcrumbTrackingEnabled;
+    const breadcrumbTrail = includeBreadcrumbs ? locationService.getBreadcrumbTrail(10) : [];
+    const lastPoint = breadcrumbTrail[breadcrumbTrail.length - 1];
+
+    if (!lastPoint) {
+      return null;
+    }
+
+    return {
+      latitude: lastPoint.latitude,
+      longitude: lastPoint.longitude,
+      timestamp: lastPoint.timestamp,
+      breadcrumbTrail,
+    };
+  }
+
+  private async sendAlertInBackground(
+    triggeredAt: number,
+    immediateLocation: EmergencyControllerLocationPayload | null
+  ): Promise<void> {
+    const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
+    const payload = {
+      deviceId: DEFAULT_DEVICE_ID,
+      status: 'TRIGGERED' as const,
+      triggeredAt,
+      location: resolvedLocation,
+    };
+
+    await this.sendAlertRequest(payload);
   }
 
   private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
