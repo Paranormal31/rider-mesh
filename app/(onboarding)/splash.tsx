@@ -11,7 +11,7 @@ export default function SplashRoute() {
     <AppScreen>
       <View style={styles.container}>
         <SectionCard>
-          <Text style={styles.title}>RiderShield</Text>
+          <Text style={styles.title}>Rider Saathi</Text>
           <Text style={styles.subtitle}>Offline Safety for Every Ride</Text>
           <PrimaryButton
             label="Continue"

@@ -355,8 +355,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#030712',
     paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 14,
+    paddingTop: 28,
+    paddingBottom: 52,
     gap: 12,
   },
   topBar: {
@@ -370,7 +370,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   mapCard: {
-    height: 250,
+    height: 236,
+    marginTop: 4,
+    marginBottom: 4,
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,

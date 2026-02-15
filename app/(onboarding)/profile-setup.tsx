@@ -141,6 +141,8 @@ export default function ProfileSetupRoute() {
 
 const styles = StyleSheet.create({
   container: {
+    flexGrow: 1,
+    justifyContent: 'center',
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xl,
   },
