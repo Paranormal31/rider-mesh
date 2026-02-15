@@ -1,5 +1,6 @@
 export const ALERT_STATUSES = [
   'TRIGGERED',
+  'ESCALATED',
   'DISPATCHING',
   'DISPATCHED',
   'RESPONDER_ASSIGNED',
@@ -48,6 +49,15 @@ export interface CreateAlertSuccessResponse {
   data: AlertRecord;
 }
 
+export interface UpdateAlertStatusRequest {
+  status: AlertStatus;
+}
+
+export interface UpdateAlertStatusResponse {
+  requestId: string;
+  data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'>;
+}
+
 export type ValidationIssueCode =
   | 'REQUIRED_FIELD'
   | 'INVALID_TYPE'
@@ -78,5 +88,13 @@ export interface InternalErrorResponse {
   error: {
     code: 'INTERNAL_ERROR';
     message: 'Failed to persist alert';
+  };
+}
+
+export interface AlertNotFoundResponse {
+  requestId: string;
+  error: {
+    code: 'ALERT_NOT_FOUND';
+    message: 'Alert not found';
   };
 }

@@ -11,12 +11,27 @@ import type { DatabaseHealth } from './types/health';
 interface CreateAppDeps {
   getDbHealth: () => DatabaseHealth;
   createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
+  updateAlertStatus: (
+    id: string,
+    status: 'CANCELLED' | 'ESCALATED'
+  ) => Promise<
+    | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+    | { kind: 'not_found' }
+    | { kind: 'blocked'; currentStatus: CreateAlertPersistenceInput['status'] }
+  >;
   now: () => Date;
   uptimeSec: () => number;
   corsOrigins: string[];
 }
 
-export function createApp({ getDbHealth, createAlert, now, uptimeSec, corsOrigins }: CreateAppDeps) {
+export function createApp({
+  getDbHealth,
+  createAlert,
+  updateAlertStatus,
+  now,
+  uptimeSec,
+  corsOrigins,
+}: CreateAppDeps) {
   const app = express();
 
   const allowedOrigins = new Set(corsOrigins);
@@ -47,6 +62,7 @@ export function createApp({ getDbHealth, createAlert, now, uptimeSec, corsOrigin
     createAlertsRouter({
       nowMs: () => now().getTime(),
       createAlert,
+      updateAlertStatus,
     })
   );
 

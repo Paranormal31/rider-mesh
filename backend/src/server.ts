@@ -2,7 +2,7 @@ import type { Server } from 'node:http';
 
 import { createApp } from './app';
 import { connectToDatabase, disconnectFromDatabase, readDbHealth } from './config/db';
-import { createAlertRecord } from './models/alert';
+import { createAlertRecord, transitionAlertStatusById } from './models/alert';
 import { loadEnv } from './config/env';
 
 const processStartedAtMs = Date.now();
@@ -39,6 +39,7 @@ async function bootstrap(): Promise<void> {
   const app = createApp({
     getDbHealth: readDbHealth,
     createAlert: createAlertRecord,
+    updateAlertStatus: transitionAlertStatusById,
     now: () => new Date(),
     uptimeSec: processUptimeSec,
     corsOrigins: env.corsOrigins,

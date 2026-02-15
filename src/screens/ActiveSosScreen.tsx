@@ -40,7 +40,7 @@ export function ActiveSosScreen() {
       setState(emergencyControllerService.getState());
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
-      setState('MONITORING');
+      setState('NORMAL');
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -67,13 +67,7 @@ export function ActiveSosScreen() {
   }, [pulse, router]);
 
   useEffect(() => {
-    if (
-      state !== 'ALERT_SENDING' &&
-      state !== 'ALERT_SENT' &&
-      state !== 'RESPONDER_ASSIGNED' &&
-      state !== 'CRASH_DETECTED' &&
-      state !== 'COUNTDOWN_ACTIVE'
-    ) {
+    if (state === 'NORMAL' || state === 'ALERT_CANCELLED') {
       if (router.canGoBack()) {
         router.back();
       } else {
@@ -120,7 +114,7 @@ export function ActiveSosScreen() {
       <StatusBadge variant={networkBadge} />
       <View style={styles.statusCard}>
         <Text style={styles.meta}>Location: {lastAlert?.location ? 'Shared' : 'Unavailable'}</Text>
-        <Text style={styles.meta}>Broadcasting: Active</Text>
+        <Text style={styles.meta}>Nearby rider alert: UI simulated</Text>
         <Text style={styles.meta}>Escalation in: {formatTimer(escalationSeconds)}</Text>
         <Text style={styles.meta}>Call Contact: {contactPhone ?? 'Not configured'}</Text>
       </View>

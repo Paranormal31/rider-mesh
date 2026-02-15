@@ -61,6 +61,11 @@ type AlertDocument = InferSchemaType<typeof alertSchema> & {
   status: AlertStatus;
 };
 
+export type AlertStatusTransitionResult =
+  | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+  | { kind: 'not_found' }
+  | { kind: 'blocked'; currentStatus: AlertStatus };
+
 const AlertModel =
   (mongoose.models.Alert as mongoose.Model<AlertDocument> | undefined) ??
   mongoose.model<AlertDocument>('Alert', alertSchema);
@@ -99,4 +104,49 @@ export async function createAlertRecord(input: CreateAlertPersistenceInput): Pro
   });
 
   return mapAlertDocument(document.toObject() as AlertDocument);
+}
+
+export async function transitionAlertStatusById(
+  id: string,
+  status: 'CANCELLED' | 'ESCALATED'
+): Promise<AlertStatusTransitionResult> {
+  const nowMs = Date.now();
+  const updated = await AlertModel.findOneAndUpdate(
+    { _id: id, status: 'TRIGGERED' },
+    {
+      $set: {
+        status,
+        updatedAt: nowMs,
+      },
+    },
+    {
+      new: true,
+      projection: {
+        _id: 1,
+        status: 1,
+        updatedAt: 1,
+      },
+    }
+  ).lean<{ _id: mongoose.Types.ObjectId; status: AlertStatus; updatedAt: number } | null>();
+
+  if (updated) {
+    return {
+      kind: 'updated',
+      data: {
+        id: updated._id.toString(),
+        status: updated.status,
+        updatedAt: updated.updatedAt,
+      },
+    };
+  }
+
+  const existing = await AlertModel.findById(id, { status: 1 }).lean<{ status: AlertStatus } | null>();
+  if (!existing) {
+    return { kind: 'not_found' };
+  }
+
+  return {
+    kind: 'blocked',
+    currentStatus: existing.status,
+  };
 }

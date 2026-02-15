@@ -1,8 +1,9 @@
-import { ALERTS_API_URL } from '@/src/config/api';
+import { ALERTS_API_URL, buildAlertStatusApiUrl } from '@/src/config/api';
 
 import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
 import { locationService, type LocationPoint } from './locationService';
+import { rideSessionService, type RideSession, type RideSessionState } from './rideSessionService';
 import { settingsService, type UserSettings } from './settingsService';
 import type { ServiceHealth } from './types';
 
@@ -14,12 +15,17 @@ type EmergencyControllerLocationPayload = {
 };
 
 type EmergencyControllerState =
-  | 'MONITORING'
-  | 'CRASH_DETECTED'
-  | 'COUNTDOWN_ACTIVE'
-  | 'ALERT_SENDING'
-  | 'ALERT_SENT'
-  | 'RESPONDER_ASSIGNED';
+  | 'NORMAL'
+  | 'ALERT_PRE_DELAY'
+  | 'ALERT_PENDING'
+  | 'ALERT_CANCELLED'
+  | 'ALERT_ESCALATED';
+
+type PreDelayStartedEvent = {
+  type: 'PRE_DELAY_STARTED';
+  startedAt: number;
+  delaySeconds: number;
+};
 
 type CountdownStartedEvent = {
   type: 'COUNTDOWN_STARTED';
@@ -45,6 +51,7 @@ type CancelledEvent = {
 };
 
 type EmergencyControllerEventMap = {
+  PRE_DELAY_STARTED: PreDelayStartedEvent;
   COUNTDOWN_STARTED: CountdownStartedEvent;
   COUNTDOWN_TICK: CountdownTickEvent;
   ALERT_TRIGGERED: AlertTriggeredEvent;
@@ -57,21 +64,33 @@ type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMa
 
 const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
 const DEFAULT_DEVICE_ID = 'dextrex-mobile-client';
+const PRE_ALERT_DELAY_SECONDS = 10;
+const CRASH_COUNTDOWN_SECONDS = 30;
+const DETECTION_RESUME_DELAY_MS = 8000;
 
 class EmergencyControllerService {
-  private state: EmergencyControllerState = 'MONITORING';
+  private state: EmergencyControllerState = 'NORMAL';
   private countdownRemainingSeconds = 0;
   private countdownStartedAtMs: number | null = null;
-  private countdownDeadlineAtMs: number | null = null;
-  private countdownTimer: ReturnType<typeof setInterval> | null = null;
+  private preDelayTimerTimeout: ReturnType<typeof setTimeout> | null = null;
+  private countdownTimerInterval: ReturnType<typeof setInterval> | null = null;
+  private escalationTimerTimeout: ReturnType<typeof setTimeout> | null = null;
+  private detectionResumeTimerTimeout: ReturnType<typeof setTimeout> | null = null;
   private crashUnsubscribe: (() => void) | null = null;
   private settingsUnsubscribe: (() => void) | null = null;
+  private rideStartedUnsubscribe: (() => void) | null = null;
+  private rideEndedUnsubscribe: (() => void) | null = null;
   private running = false;
+  private crashDetectionRunning = false;
   private reentryLockedUntilMs = 0;
   private lastAlertEvent: AlertTriggeredEvent | null = null;
+  private activeAlertId: string | null = null;
+  private createAlertInFlight: Promise<void> | null = null;
+  private statusUpdateInFlight: 'CANCELLED' | 'ESCALATED' | null = null;
   private listeners: {
     [K in keyof EmergencyControllerEventMap]: Set<EmergencyControllerListener<K>>;
   } = {
+    PRE_DELAY_STARTED: new Set(),
     COUNTDOWN_STARTED: new Set(),
     COUNTDOWN_TICK: new Set(),
     ALERT_TRIGGERED: new Set(),
@@ -83,7 +102,7 @@ class EmergencyControllerService {
       return;
     }
 
-    await crashDetectionService.start();
+    await rideSessionService.load();
     const settings = settingsService.getSettings();
     if (settings.breadcrumbTrackingEnabled) {
       void locationService.startTracking().catch(() => {
@@ -100,24 +119,38 @@ class EmergencyControllerService {
     this.crashUnsubscribe = crashDetectionService.on('CRASH_DETECTED', (event) =>
       this.handleCrashDetected(event)
     );
+    this.rideStartedUnsubscribe = rideSessionService.on('RIDE_STARTED', ({ session }) =>
+      this.handleRideStateChanged(session.state)
+    );
+    this.rideEndedUnsubscribe = rideSessionService.on('RIDE_ENDED', ({ session }) =>
+      this.handleRideStateChanged(session.state)
+    );
     this.running = true;
-    this.state = 'MONITORING';
+    this.state = 'NORMAL';
+    this.handleRideStateChanged(rideSessionService.getCurrentSession().state);
   }
 
   stop(): void {
-    this.clearCountdownTimer();
+    this.clearTimers();
+    this.clearDetectionResumeTimer();
+    this.stopDetection();
     alarmAudioService.stop();
     this.crashUnsubscribe?.();
     this.crashUnsubscribe = null;
     this.settingsUnsubscribe?.();
     this.settingsUnsubscribe = null;
+    this.rideStartedUnsubscribe?.();
+    this.rideStartedUnsubscribe = null;
+    this.rideEndedUnsubscribe?.();
+    this.rideEndedUnsubscribe = null;
     this.running = false;
-    this.state = 'MONITORING';
+    this.state = 'NORMAL';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
-    this.countdownDeadlineAtMs = null;
     this.reentryLockedUntilMs = 0;
-    crashDetectionService.stop();
+    this.activeAlertId = null;
+    this.createAlertInFlight = null;
+    this.statusUpdateInFlight = null;
     locationService.stopTracking();
   }
 
@@ -149,29 +182,34 @@ class EmergencyControllerService {
 
   cancel(): void {
     if (
-      this.state !== 'COUNTDOWN_ACTIVE' &&
-      this.state !== 'CRASH_DETECTED' &&
-      this.state !== 'ALERT_SENDING' &&
-      this.state !== 'ALERT_SENT'
+      (this.state !== 'ALERT_PRE_DELAY' && this.state !== 'ALERT_PENDING') ||
+      this.statusUpdateInFlight === 'ESCALATED'
     ) {
       return;
     }
 
-    this.clearCountdownTimer();
+    const alertIdToCancel = this.activeAlertId;
+    this.clearTimers();
     alarmAudioService.stop();
-    this.state = 'MONITORING';
+    this.state = 'ALERT_CANCELLED';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
-    this.countdownDeadlineAtMs = null;
     this.reentryLockedUntilMs = 0;
+    this.activeAlertId = null;
+    this.createAlertInFlight = null;
+    if (alertIdToCancel) {
+      void this.sendTerminalStatusUpdate(alertIdToCancel, 'CANCELLED');
+    }
     this.emit('CANCELLED', {
       type: 'CANCELLED',
       cancelledAt: Date.now(),
     });
+    this.scheduleDetectionResumeIfRideActive(DETECTION_RESUME_DELAY_MS);
+    this.state = 'NORMAL';
   }
 
   getHealth(): ServiceHealth {
-    const isActive = this.running || this.state !== 'MONITORING';
+    const isActive = this.running || this.state !== 'NORMAL';
     return {
       name: 'Emergency Controller',
       state: isActive ? 'active' : 'idle',
@@ -189,27 +227,30 @@ class EmergencyControllerService {
       return;
     }
 
-    if (this.state !== 'MONITORING') {
+    if (this.isAlertFlowActive()) {
       return;
     }
 
     const settings = settingsService.getSettings();
-    this.state = 'CRASH_DETECTED';
+    const triggeredAt = nowMs;
+    const immediateLocation = this.buildImmediateLocationPayload();
+    this.state = 'ALERT_PRE_DELAY';
     if (settings.alarmSoundEnabled) {
       alarmAudioService.start();
     }
-    this.startCountdown(settings.countdownDurationSeconds);
+    this.pauseDetectionForAlertFlow();
+    void this.ensureAlertCreated(triggeredAt, immediateLocation);
+    this.startPreAlertDelay(PRE_ALERT_DELAY_SECONDS, triggeredAt, immediateLocation);
   }
 
   async sendAlertNow(): Promise<boolean> {
-    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+    if (this.state !== 'ALERT_PRE_DELAY' && this.state !== 'ALERT_PENDING') {
       return false;
     }
 
-    this.clearCountdownTimer();
+    this.clearTimers();
     this.countdownRemainingSeconds = 0;
-    this.countdownDeadlineAtMs = null;
-    await this.triggerAlert();
+    await this.escalateAlert(Date.now(), this.buildImmediateLocationPayload());
     return true;
   }
 
@@ -217,24 +258,50 @@ class EmergencyControllerService {
     if (!this.running) {
       return false;
     }
-    if (this.state === 'ALERT_SENDING' || this.state === 'ALERT_SENT') {
+    if (
+      this.state === 'ALERT_PRE_DELAY' ||
+      this.state === 'ALERT_PENDING' ||
+      this.state === 'ALERT_ESCALATED'
+    ) {
       return false;
     }
 
-    this.clearCountdownTimer();
+    this.clearTimers();
+    this.pauseDetectionForAlertFlow();
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
-    this.countdownDeadlineAtMs = null;
-    await this.triggerAlert();
+    await this.escalateAlert(Date.now(), this.buildImmediateLocationPayload());
     return true;
   }
 
-  private startCountdown(seconds: number): void {
-    this.clearCountdownTimer();
-    this.state = 'COUNTDOWN_ACTIVE';
+  private startPreAlertDelay(
+    seconds: number,
+    triggeredAt: number,
+    immediateLocation: EmergencyControllerLocationPayload | null
+  ): void {
+    this.clearTimers();
+    this.state = 'ALERT_PRE_DELAY';
+    this.countdownRemainingSeconds = 0;
+    this.countdownStartedAtMs = Date.now();
+
+    this.emit('PRE_DELAY_STARTED', {
+      type: 'PRE_DELAY_STARTED',
+      startedAt: this.countdownStartedAtMs,
+      delaySeconds: seconds,
+    });
+
+    this.preDelayTimerTimeout = setTimeout(() => {
+      this.preDelayTimerTimeout = null;
+      this.startCountdown(CRASH_COUNTDOWN_SECONDS, () => {
+        void this.escalateAlert(triggeredAt, immediateLocation);
+      });
+    }, seconds * 1000);
+  }
+
+  private startCountdown(seconds: number, onTimeout: () => void): void {
+    this.state = 'ALERT_PENDING';
     this.countdownRemainingSeconds = seconds;
     this.countdownStartedAtMs = Date.now();
-    this.countdownDeadlineAtMs = this.countdownStartedAtMs + seconds * 1000;
 
     this.emit('COUNTDOWN_STARTED', {
       type: 'COUNTDOWN_STARTED',
@@ -242,37 +309,35 @@ class EmergencyControllerService {
       remainingSeconds: this.countdownRemainingSeconds,
     });
 
-    this.countdownTimer = setInterval(() => {
-      if (this.countdownDeadlineAtMs === null) {
-        return;
-      }
+    this.countdownTimerInterval = setInterval(() => {
+      this.countdownRemainingSeconds = Math.max(0, this.countdownRemainingSeconds - 1);
+      this.emit('COUNTDOWN_TICK', {
+        type: 'COUNTDOWN_TICK',
+        remainingSeconds: this.countdownRemainingSeconds,
+      });
+    }, 1000);
 
-      const msLeft = this.countdownDeadlineAtMs - Date.now();
-      const nextRemaining = Math.max(0, Math.ceil(msLeft / 1000));
-
-      if (nextRemaining !== this.countdownRemainingSeconds) {
-        this.countdownRemainingSeconds = nextRemaining;
-        this.emit('COUNTDOWN_TICK', {
-          type: 'COUNTDOWN_TICK',
-          remainingSeconds: this.countdownRemainingSeconds,
-        });
-      }
-
-      if (nextRemaining <= 0) {
-        this.clearCountdownTimer();
-        this.countdownRemainingSeconds = 0;
-        this.countdownStartedAtMs = null;
-        this.countdownDeadlineAtMs = null;
-        void this.triggerAlert();
-      }
-    }, 250);
+    this.escalationTimerTimeout = setTimeout(() => {
+      this.clearTimers();
+      this.countdownRemainingSeconds = 0;
+      this.countdownStartedAtMs = null;
+      onTimeout();
+    }, seconds * 1000);
   }
 
-  private async triggerAlert(): Promise<void> {
+  private async escalateAlert(
+    triggeredAt: number,
+    immediateLocation: EmergencyControllerLocationPayload | null
+  ): Promise<void> {
+    if (this.statusUpdateInFlight) {
+      return;
+    }
+
     const now = Date.now();
     const settings = settingsService.getSettings();
-    this.state = 'ALERT_SENDING';
-    const immediateLocation = this.buildImmediateLocationPayload();
+    // Mark escalation state immediately to block late cancel attempts while network calls are in flight.
+    this.state = 'ALERT_ESCALATED';
+    await this.ensureAlertCreated(triggeredAt, immediateLocation);
     const eventPayload: AlertTriggeredEvent = {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
@@ -280,12 +345,33 @@ class EmergencyControllerService {
       location: immediateLocation,
     };
     this.lastAlertEvent = eventPayload;
+    const alertIdToEscalate = this.activeAlertId;
+    this.activeAlertId = null;
+    if (alertIdToEscalate) {
+      await this.sendTerminalStatusUpdate(alertIdToEscalate, 'ESCALATED');
+    }
     this.emit('ALERT_TRIGGERED', eventPayload);
-    this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
     alarmAudioService.stop();
+    this.scheduleDetectionResumeIfRideActive(DETECTION_RESUME_DELAY_MS);
+  }
 
-    void this.sendAlertInBackground(now, immediateLocation);
+  private async sendTerminalStatusUpdate(
+    alertId: string,
+    status: 'CANCELLED' | 'ESCALATED'
+  ): Promise<void> {
+    if (this.statusUpdateInFlight) {
+      return;
+    }
+
+    this.statusUpdateInFlight = status;
+    try {
+      await this.sendUpdateAlertStatusRequest(alertId, status);
+    } finally {
+      if (this.statusUpdateInFlight === status) {
+        this.statusUpdateInFlight = null;
+      }
+    }
   }
 
   private buildImmediateLocationPayload(): EmergencyControllerLocationPayload | null {
@@ -305,19 +391,38 @@ class EmergencyControllerService {
     };
   }
 
-  private async sendAlertInBackground(
+  private async ensureAlertCreated(
     triggeredAt: number,
     immediateLocation: EmergencyControllerLocationPayload | null
   ): Promise<void> {
-    const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
-    const payload = {
-      deviceId: DEFAULT_DEVICE_ID,
-      status: 'TRIGGERED' as const,
-      triggeredAt,
-      location: resolvedLocation,
-    };
+    if (this.activeAlertId) {
+      return;
+    }
+    if (this.createAlertInFlight) {
+      await this.createAlertInFlight;
+      return;
+    }
 
-    await this.sendAlertRequest(payload);
+    this.createAlertInFlight = (async () => {
+      const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
+      const payload = {
+        deviceId: DEFAULT_DEVICE_ID,
+        status: 'TRIGGERED' as const,
+        triggeredAt,
+        location: resolvedLocation,
+      };
+
+      const alertId = await this.sendCreateAlertRequest(payload);
+      if (alertId && this.state !== 'NORMAL' && this.state !== 'ALERT_CANCELLED') {
+        this.activeAlertId = alertId;
+      }
+    })();
+
+    try {
+      await this.createAlertInFlight;
+    } finally {
+      this.createAlertInFlight = null;
+    }
   }
 
   private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
@@ -337,8 +442,128 @@ class EmergencyControllerService {
     }
   }
 
+  private async sendCreateAlertRequest(payload: {
+    deviceId: string;
+    status: 'TRIGGERED';
+    triggeredAt: number;
+    location: {
+      latitude: number;
+      longitude: number;
+      timestamp: number;
+      breadcrumbTrail: LocationPoint[];
+    } | null;
+  }): Promise<string | null> {
+    try {
+      const response = await fetch(ALERTS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = (await response.json().catch(() => null)) as
+        | { data?: { id?: string } }
+        | null;
+
+      if (!response.ok) {
+        console.error('[alerts] Failed to send alert', {
+          url: ALERTS_API_URL,
+          status: response.status,
+          body,
+        });
+        return null;
+      }
+
+      const alertId = typeof body?.data?.id === 'string' ? body.data.id : null;
+      console.log('[alerts] Alert sent successfully', { alertId, body });
+      return alertId;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error('[alerts] Network error while sending alert', {
+        url: ALERTS_API_URL,
+        reason,
+      });
+      return null;
+    }
+  }
+
+  private async sendUpdateAlertStatusRequest(
+    alertId: string,
+    status: 'CANCELLED' | 'ESCALATED'
+  ): Promise<void> {
+    const url = buildAlertStatusApiUrl(alertId);
+    try {
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      const body = (await response.json().catch(() => null)) as unknown;
+
+      if (!response.ok) {
+        if (
+          status === 'CANCELLED' &&
+          response.status === 400 &&
+          this.isStaleEscalatedTransition(body)
+        ) {
+          console.warn('[alerts] Cancel skipped because alert was already escalated', {
+            url,
+            status: response.status,
+            body,
+            nextStatus: status,
+            alertId,
+          });
+          return;
+        }
+
+        console.error('[alerts] Failed to update alert status', {
+          url,
+          status: response.status,
+          body,
+          nextStatus: status,
+          alertId,
+        });
+        return;
+      }
+
+      console.log('[alerts] Alert status updated successfully', { alertId, nextStatus: status, body });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error('[alerts] Network error while updating alert status', {
+        url,
+        reason,
+        nextStatus: status,
+        alertId,
+      });
+    }
+  }
+
+  private isStaleEscalatedTransition(body: unknown): boolean {
+    if (!body || typeof body !== 'object') {
+      return false;
+    }
+
+    const maybeError = (body as { error?: { details?: { message?: unknown }[] } }).error;
+    const details = Array.isArray(maybeError?.details) ? maybeError.details : [];
+
+    return details.some((detail) => {
+      if (!detail || typeof detail !== 'object') {
+        return false;
+      }
+      const message = detail.message;
+      return (
+        typeof message === 'string' &&
+        message.includes('Cannot transition from ESCALATED to CANCELLED')
+      );
+    });
+  }
+
   private handleSettingsChanged(settings: UserSettings): void {
-    const shouldAlarmBeActive = this.state === 'CRASH_DETECTED' || this.state === 'COUNTDOWN_ACTIVE';
+    const shouldAlarmBeActive = this.state === 'ALERT_PRE_DELAY' || this.state === 'ALERT_PENDING';
     if (!settings.alarmSoundEnabled) {
       alarmAudioService.stop();
     } else if (shouldAlarmBeActive && !alarmAudioService.isPlaying()) {
@@ -359,53 +584,87 @@ class EmergencyControllerService {
     locationService.stopTracking();
   }
 
-  private async sendAlertRequest(payload: {
-    deviceId: string;
-    status: 'TRIGGERED';
-    triggeredAt: number;
-    location: {
-      latitude: number;
-      longitude: number;
-      timestamp: number;
-      breadcrumbTrail: LocationPoint[];
-    } | null;
-  }): Promise<void> {
-    try {
-      const response = await fetch(ALERTS_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const body = (await response.json().catch(() => null)) as unknown;
-
-      if (!response.ok) {
-        console.error('[alerts] Failed to send alert', {
-          url: ALERTS_API_URL,
-          status: response.status,
-          body,
-        });
-        return;
-      }
-
-      console.log('[alerts] Alert sent successfully', body);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error('[alerts] Network error while sending alert', {
-        url: ALERTS_API_URL,
-        reason,
-      });
+  private clearTimers(): void {
+    if (this.preDelayTimerTimeout) {
+      clearTimeout(this.preDelayTimerTimeout);
+      this.preDelayTimerTimeout = null;
+    }
+    if (this.countdownTimerInterval) {
+      clearInterval(this.countdownTimerInterval);
+      this.countdownTimerInterval = null;
+    }
+    if (this.escalationTimerTimeout) {
+      clearTimeout(this.escalationTimerTimeout);
+      this.escalationTimerTimeout = null;
     }
   }
 
-  private clearCountdownTimer(): void {
-    if (this.countdownTimer) {
-      clearInterval(this.countdownTimer);
-      this.countdownTimer = null;
+  private handleRideStateChanged(nextRideState: RideSessionState): void {
+    if (nextRideState === 'ACTIVE') {
+      if (!this.isAlertFlowActive()) {
+        this.clearDetectionResumeTimer();
+        void this.startDetectionIfRideActive();
+      }
+      return;
     }
-    this.countdownDeadlineAtMs = null;
+
+    this.clearDetectionResumeTimer();
+    this.stopDetection();
+  }
+
+  private isAlertFlowActive(): boolean {
+    return this.state === 'ALERT_PRE_DELAY' || this.state === 'ALERT_PENDING';
+  }
+
+  private pauseDetectionForAlertFlow(): void {
+    this.clearDetectionResumeTimer();
+    this.stopDetection();
+  }
+
+  private scheduleDetectionResumeIfRideActive(delayMs: number): void {
+    this.clearDetectionResumeTimer();
+    if (!this.running) {
+      return;
+    }
+
+    this.detectionResumeTimerTimeout = setTimeout(() => {
+      this.detectionResumeTimerTimeout = null;
+      void this.startDetectionIfRideActive();
+    }, delayMs);
+  }
+
+  private clearDetectionResumeTimer(): void {
+    if (this.detectionResumeTimerTimeout) {
+      clearTimeout(this.detectionResumeTimerTimeout);
+      this.detectionResumeTimerTimeout = null;
+    }
+  }
+
+  private async startDetectionIfRideActive(): Promise<void> {
+    if (!this.running || this.crashDetectionRunning || this.isAlertFlowActive()) {
+      return;
+    }
+
+    const currentRide: RideSession = rideSessionService.getCurrentSession();
+    if (currentRide.state !== 'ACTIVE') {
+      return;
+    }
+
+    try {
+      await crashDetectionService.start();
+      this.crashDetectionRunning = true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error('[crash-detection] Failed to start detection', { reason });
+    }
+  }
+
+  private stopDetection(): void {
+    if (!this.crashDetectionRunning) {
+      return;
+    }
+    crashDetectionService.stop();
+    this.crashDetectionRunning = false;
   }
 
   private emit<TEvent extends keyof EmergencyControllerEventMap>(

@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto';
 
 import { type RequestHandler, type Response, Router } from 'express';
+import { isValidObjectId } from 'mongoose';
 
 import type {
+  AlertNotFoundResponse,
   AlertBreadcrumbPoint,
   AlertLocation,
   AlertRecord,
   CreateAlertPersistenceInput,
   CreateAlertSuccessResponse,
   InternalErrorResponse,
+  UpdateAlertStatusResponse,
   ValidationErrorResponse,
   ValidationIssue,
   ValidationIssueCode,
@@ -35,11 +38,34 @@ type CreateAlertResult =
 export interface CreateAlertsRouteDeps {
   nowMs: () => number;
   createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
+  updateAlertStatus: (
+    id: string,
+    status: 'CANCELLED' | 'ESCALATED'
+  ) => Promise<
+    | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+    | { kind: 'not_found' }
+    | { kind: 'blocked'; currentStatus: CreateAlertPersistenceInput['status'] }
+  >;
 }
 
-interface ProcessCreateAlertDeps extends CreateAlertsRouteDeps {
+interface ProcessCreateAlertDeps {
   payload: unknown;
   requestId: string;
+  nowMs: CreateAlertsRouteDeps['nowMs'];
+  createAlert: CreateAlertsRouteDeps['createAlert'];
+}
+
+type UpdateAlertStatusResult =
+  | { statusCode: 200; body: UpdateAlertStatusResponse }
+  | { statusCode: 400; body: ValidationErrorResponse }
+  | { statusCode: 404; body: AlertNotFoundResponse }
+  | { statusCode: 500; body: InternalErrorResponse };
+
+interface ProcessUpdateAlertStatusDeps {
+  alertId: string;
+  payload: unknown;
+  requestId: string;
+  updateAlertStatus: CreateAlertsRouteDeps['updateAlertStatus'];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -385,6 +411,128 @@ export async function processCreateAlertRequest({
   }
 }
 
+export async function processUpdateAlertStatusRequest({
+  alertId,
+  payload,
+  requestId,
+  updateAlertStatus,
+}: ProcessUpdateAlertStatusDeps): Promise<UpdateAlertStatusResult> {
+  const details: ValidationIssue[] = [];
+
+  if (!isValidObjectId(alertId)) {
+    details.push({
+      field: 'id',
+      code: 'INVALID_VALUE',
+      message: 'id must be a valid Mongo ObjectId',
+    });
+  }
+
+  if (!isPlainObject(payload)) {
+    details.push({
+      field: 'body',
+      code: 'INVALID_TYPE',
+      message: 'Request body must be a JSON object',
+    });
+  } else {
+    pushUnknownFieldIssues(details, payload, new Set(['status']));
+
+    if (!Object.prototype.hasOwnProperty.call(payload, 'status')) {
+      details.push({
+        field: 'status',
+        code: 'REQUIRED_FIELD',
+        message: 'status is required',
+      });
+    } else if (typeof payload.status !== 'string') {
+      details.push({
+        field: 'status',
+        code: 'INVALID_TYPE',
+        message: 'status must be a string',
+      });
+    } else if (!ALERT_STATUSES.includes(payload.status as (typeof ALERT_STATUSES)[number])) {
+      details.push({
+        field: 'status',
+        code: 'INVALID_ENUM',
+        message: `status must be one of: ${ALERT_STATUSES.join(', ')}`,
+      });
+    } else if (payload.status !== 'CANCELLED' && payload.status !== 'ESCALATED') {
+      details.push({
+        field: 'status',
+        code: 'INVALID_ENUM',
+        message: 'status must be CANCELLED or ESCALATED for this endpoint',
+      });
+    }
+  }
+
+  if (details.length > 0) {
+    return {
+      statusCode: 400,
+      body: {
+        requestId,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Request validation failed',
+          details,
+        },
+      },
+    };
+  }
+
+  try {
+    const requestedStatus = (payload as { status: 'CANCELLED' | 'ESCALATED' }).status;
+    const updated = await updateAlertStatus(alertId, requestedStatus);
+    if (updated.kind === 'not_found') {
+      return {
+        statusCode: 404,
+        body: {
+          requestId,
+          error: {
+            code: 'ALERT_NOT_FOUND',
+            message: 'Alert not found',
+          },
+        },
+      };
+    }
+    if (updated.kind === 'blocked') {
+      return {
+        statusCode: 400,
+        body: {
+          requestId,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Request validation failed',
+            details: [
+              {
+                field: 'status',
+                code: 'INVALID_VALUE',
+                message: `Cannot transition from ${updated.currentStatus} to ${requestedStatus}`,
+              },
+            ],
+          },
+        },
+      };
+    }
+
+    return {
+      statusCode: 200,
+      body: {
+        requestId,
+        data: updated.data,
+      },
+    };
+  } catch {
+    return {
+      statusCode: 500,
+      body: {
+        requestId,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to persist alert',
+        },
+      },
+    };
+  }
+}
+
 function resolveRequestId(response: Response): string {
   const requestId = response.locals.requestId;
   if (typeof requestId === 'string' && requestId.length > 0) {
@@ -396,7 +544,7 @@ function resolveRequestId(response: Response): string {
   return fallbackId;
 }
 
-export function createAlertsRouter({ nowMs, createAlert }: CreateAlertsRouteDeps): Router {
+export function createAlertsRouter({ nowMs, createAlert, updateAlertStatus }: CreateAlertsRouteDeps): Router {
   const router = Router();
 
   const handler: RequestHandler = async (request, response) => {
@@ -412,6 +560,20 @@ export function createAlertsRouter({ nowMs, createAlert }: CreateAlertsRouteDeps
   };
 
   router.post('/api/v1/alerts', handler);
+
+  const updateStatusHandler: RequestHandler = async (request, response) => {
+    const requestId = resolveRequestId(response);
+    const result = await processUpdateAlertStatusRequest({
+      alertId: request.params.id,
+      payload: request.body,
+      requestId,
+      updateAlertStatus,
+    });
+
+    response.status(result.statusCode).json(result.body);
+  };
+
+  router.patch('/api/v1/alerts/:id', updateStatusHandler);
 
   return router;
 }
