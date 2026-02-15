@@ -17,6 +17,7 @@ export { emergencyControllerService } from './emergencyControllerService';
 export type { EmergencyContact } from './emergencyContactsService';
 export type { EmergencyControllerState } from './emergencyControllerService';
 export { locationService } from './locationService';
+export { onboardingService } from './onboardingService';
 export { settingsService } from './settingsService';
 export type {
   CountdownDurationSeconds,
