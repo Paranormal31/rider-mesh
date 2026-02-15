@@ -1,6 +1,6 @@
 import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusBadge } from '@/src/components/ui';
 import {
@@ -13,6 +13,7 @@ import {
   rideSessionService,
   settingsService,
   type HazardRecord,
+  type HazardType,
   type NetworkMeshStatus,
   type RideSession,
 } from '@/src/services';
@@ -24,6 +25,8 @@ type MapModules = {
   MapView?: ComponentType<any>;
   Marker?: ComponentType<any>;
   Polyline?: ComponentType<any>;
+  Heatmap?: ComponentType<any>;
+  Circle?: ComponentType<any>;
 };
 
 function loadMapModules(): MapModules {
@@ -35,6 +38,8 @@ function loadMapModules(): MapModules {
       MapView: maps.default,
       Marker: maps.Marker,
       Polyline: maps.Polyline,
+      Heatmap: maps.Heatmap,
+      Circle: maps.Circle,
     };
   } catch {
     return { available: false };
@@ -230,6 +235,97 @@ export function HomeScreen() {
     return 'offline' as const;
   }, [networkStatus]);
 
+  const heatmapByType = useMemo(() => {
+    const grouped: Record<HazardType, Array<{ latitude: number; longitude: number; weight: number }>> = {
+      POTHOLE: [],
+      CONSTRUCTION: [],
+      WATERLOGGING: [],
+      ACCIDENT_ZONE: [],
+    };
+
+    for (const hazard of hazards) {
+      grouped[hazard.type].push({
+        latitude: hazard.latitude,
+        longitude: hazard.longitude,
+        weight: 1,
+      });
+    }
+
+    return grouped;
+  }, [hazards]);
+
+  const heatmapGradients: Record<HazardType, { colors: string[]; startPoints: number[]; colorMapSize: number }> = {
+    POTHOLE: {
+      colors: ['#FDBA74', '#F97316', '#C2410C'],
+      startPoints: [0.2, 0.6, 1],
+      colorMapSize: 256,
+    },
+    CONSTRUCTION: {
+      colors: ['#FDE68A', '#FACC15', '#A16207'],
+      startPoints: [0.2, 0.6, 1],
+      colorMapSize: 256,
+    },
+    WATERLOGGING: {
+      colors: ['#93C5FD', '#3B82F6', '#1E3A8A'],
+      startPoints: [0.2, 0.6, 1],
+      colorMapSize: 256,
+    },
+    ACCIDENT_ZONE: {
+      colors: ['#FCA5A5', '#EF4444', '#991B1B'],
+      startPoints: [0.2, 0.6, 1],
+      colorMapSize: 256,
+    },
+  };
+
+  const redZones = useMemo(() => {
+    const threshold = 5;
+    const radiusMeters = 200;
+    const visited = new Set<string>();
+    const zones: Array<{ latitude: number; longitude: number }> = [];
+
+    for (let i = 0; i < hazards.length; i += 1) {
+      const base = hazards[i];
+      if (!base) {
+        continue;
+      }
+      const key = `${base.latitude.toFixed(5)}:${base.longitude.toFixed(5)}`;
+      if (visited.has(key)) {
+        continue;
+      }
+
+      const neighbors = hazards.filter((candidate) => {
+        return distanceMeters(
+          base.latitude,
+          base.longitude,
+          candidate.latitude,
+          candidate.longitude
+        ) <= radiusMeters;
+      });
+
+      if (neighbors.length >= threshold) {
+        const centroid = neighbors.reduce(
+          (acc, item) => {
+            acc.latitude += item.latitude;
+            acc.longitude += item.longitude;
+            return acc;
+          },
+          { latitude: 0, longitude: 0 }
+        );
+
+        zones.push({
+          latitude: centroid.latitude / neighbors.length,
+          longitude: centroid.longitude / neighbors.length,
+        });
+
+        neighbors.forEach((item) => {
+          visited.add(`${item.latitude.toFixed(5)}:${item.longitude.toFixed(5)}`);
+        });
+      }
+    }
+
+    return zones;
+  }, [hazards]);
+
   const onToggleRide = () => {
     if (rideSession.state === 'ACTIVE') {
       void rideSessionService.endRide();
@@ -238,24 +334,33 @@ export function HomeScreen() {
     void rideSessionService.startRide();
   };
 
-  const onAddHazard = async () => {
-    const point = currentPosition;
-    if (!point) {
-      return;
-    }
-    await hazardService.addHazard({
-      type: 'POTHOLE',
-      latitude: point.latitude,
-      longitude: point.longitude,
-    });
+  const onAddHazard = () => {
+    router.push('/report-hazard');
   };
 
   const onManualSos = async () => {
-    const sent = await emergencyControllerService.triggerManualSos();
-    if (sent) {
-      activeSosModalOpen.current = true;
-      router.push('/active-sos');
-    }
+    Alert.alert(
+      'Send SOS?',
+      'This will start the emergency countdown and notify your contacts if not canceled.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          style: 'destructive',
+          onPress: async () => {
+            await emergencyControllerService.start();
+            const sent = await emergencyControllerService.triggerManualSos();
+            if (sent) {
+              crashModalOpen.current = true;
+              activeSosModalOpen.current = false;
+              router.push('/crash-alert');
+            } else {
+              Alert.alert('SOS unavailable', 'An SOS is already active or initializing. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -270,6 +375,30 @@ export function HomeScreen() {
       <View style={styles.mapCard}>
         {mapModules.available && mapModules.MapView && mapModules.Marker ? (
           <mapModules.MapView style={styles.map} initialRegion={mapRegion} region={mapRegion}>
+            {mapModules.Heatmap && Platform.OS === 'android'
+              ? (Object.keys(heatmapByType) as HazardType[]).map((type) =>
+                  heatmapByType[type].length > 0 ? (
+                    <mapModules.Heatmap
+                      key={`heatmap-${type}`}
+                      points={heatmapByType[type]}
+                      radius={30}
+                      opacity={0.7}
+                      gradient={heatmapGradients[type]}
+                    />
+                  ) : null
+                )
+              : null}
+            {mapModules.Circle && Platform.OS === 'android'
+              ? redZones.map((zone, index) => (
+                  <mapModules.Circle
+                    key={`red-zone-${index}`}
+                    center={zone}
+                    radius={200}
+                    strokeColor="rgba(239, 68, 68, 0.6)"
+                    fillColor="rgba(239, 68, 68, 0.25)"
+                  />
+                ))
+              : null}
             {currentPosition ? <mapModules.Marker coordinate={currentPosition} title="You" /> : null}
             {hazards.map((hazard) => (
               <mapModules.Marker
@@ -312,7 +441,7 @@ export function HomeScreen() {
         <Pressable style={styles.primaryAction} onPress={onToggleRide}>
           <Text style={styles.primaryActionText}>{rideSession.state === 'ACTIVE' ? 'End Ride' : 'Start Ride'}</Text>
         </Pressable>
-        <Pressable style={styles.secondaryAction} onPress={() => void onAddHazard()}>
+        <Pressable style={styles.secondaryAction} onPress={onAddHazard}>
           <Text style={styles.secondaryActionText}>Report Hazard</Text>
         </Pressable>
         <Animated.View style={{ transform: [{ scale: sosPulse }] }}>
@@ -348,6 +477,18 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadius * c;
 }
 
 const styles = StyleSheet.create({

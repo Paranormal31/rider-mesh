@@ -217,15 +217,20 @@ class EmergencyControllerService {
     if (!this.running) {
       return false;
     }
-    if (this.state === 'ALERT_SENDING' || this.state === 'ALERT_SENT') {
+    const nowMs = Date.now();
+    if (nowMs < this.reentryLockedUntilMs) {
+      return false;
+    }
+    if (this.state !== 'MONITORING') {
       return false;
     }
 
-    this.clearCountdownTimer();
-    this.countdownRemainingSeconds = 0;
-    this.countdownStartedAtMs = null;
-    this.countdownDeadlineAtMs = null;
-    await this.triggerAlert();
+    const settings = settingsService.getSettings();
+    this.state = 'CRASH_DETECTED';
+    if (settings.alarmSoundEnabled) {
+      alarmAudioService.start();
+    }
+    this.startCountdown(3);
     return true;
   }
 

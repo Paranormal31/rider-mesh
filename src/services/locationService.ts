@@ -58,6 +58,28 @@ class LocationService {
     this.tracking = true;
   }
 
+  async watchPosition(handler: (point: LocationPoint) => void): Promise<() => void> {
+    await this.ensurePermission();
+    const subscription = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 1500,
+        distanceInterval: 2,
+      },
+      (update) => {
+        handler({
+          latitude: update.coords.latitude,
+          longitude: update.coords.longitude,
+          timestamp: update.timestamp,
+        });
+      }
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }
+
   stopTracking(): void {
     this.subscription?.remove();
     this.subscription = null;
