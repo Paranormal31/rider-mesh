@@ -67,6 +67,7 @@ class EmergencyControllerService {
   private settingsUnsubscribe: (() => void) | null = null;
   private running = false;
   private reentryLockedUntilMs = 0;
+  private lastAlertEvent: AlertTriggeredEvent | null = null;
   private listeners: {
     [K in keyof EmergencyControllerEventMap]: Set<EmergencyControllerListener<K>>;
   } = {
@@ -136,8 +137,21 @@ class EmergencyControllerService {
     return this.countdownRemainingSeconds;
   }
 
+  getCountdownStartedAtMs(): number | null {
+    return this.countdownStartedAtMs;
+  }
+
+  getLastAlertEvent(): AlertTriggeredEvent | null {
+    return this.lastAlertEvent ? { ...this.lastAlertEvent } : null;
+  }
+
   cancel(): void {
-    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+    if (
+      this.state !== 'COUNTDOWN_ACTIVE' &&
+      this.state !== 'CRASH_DETECTED' &&
+      this.state !== 'ALERT_SENDING' &&
+      this.state !== 'ALERT_SENT'
+    ) {
       return;
     }
 
@@ -146,6 +160,7 @@ class EmergencyControllerService {
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.reentryLockedUntilMs = 0;
     this.emit('CANCELLED', {
       type: 'CANCELLED',
       cancelledAt: Date.now(),
@@ -183,6 +198,32 @@ class EmergencyControllerService {
     this.startCountdown(settings.countdownDurationSeconds);
   }
 
+  async sendAlertNow(): Promise<boolean> {
+    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+      return false;
+    }
+
+    this.clearCountdownTimer();
+    this.countdownRemainingSeconds = 0;
+    await this.triggerAlert();
+    return true;
+  }
+
+  async triggerManualSos(): Promise<boolean> {
+    if (!this.running) {
+      return false;
+    }
+    if (this.state === 'ALERT_SENDING' || this.state === 'ALERT_SENT') {
+      return false;
+    }
+
+    this.clearCountdownTimer();
+    this.countdownRemainingSeconds = 0;
+    this.countdownStartedAtMs = null;
+    await this.triggerAlert();
+    return true;
+  }
+
   private startCountdown(seconds: number): void {
     this.clearCountdownTimer();
     this.state = 'COUNTDOWN_ACTIVE';
@@ -216,13 +257,14 @@ class EmergencyControllerService {
     const settings = settingsService.getSettings();
     this.state = 'ALERT_SENDING';
     const immediateLocation = this.buildImmediateLocationPayload();
-
-    this.emit('ALERT_TRIGGERED', {
+    const eventPayload: AlertTriggeredEvent = {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
       alarmSoundEnabled: settings.alarmSoundEnabled,
       location: immediateLocation,
-    });
+    };
+    this.lastAlertEvent = eventPayload;
+    this.emit('ALERT_TRIGGERED', eventPayload);
     this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
     alarmAudioService.stop();
