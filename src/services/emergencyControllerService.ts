@@ -215,26 +215,51 @@ class EmergencyControllerService {
     const now = Date.now();
     const settings = settingsService.getSettings();
     this.state = 'ALERT_SENDING';
-    const location = await this.buildAlertLocationPayload();
-
-    const payload = {
-      deviceId: DEFAULT_DEVICE_ID,
-      status: 'TRIGGERED' as const,
-      triggeredAt: now,
-      location,
-    };
-
-    await this.sendAlertRequest(payload);
+    const immediateLocation = this.buildImmediateLocationPayload();
 
     this.emit('ALERT_TRIGGERED', {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
       alarmSoundEnabled: settings.alarmSoundEnabled,
-      location,
+      location: immediateLocation,
     });
     this.state = 'ALERT_SENT';
     this.reentryLockedUntilMs = now + DEFAULT_REENTRY_COOLDOWN_MS;
     alarmAudioService.stop();
+
+    void this.sendAlertInBackground(now, immediateLocation);
+  }
+
+  private buildImmediateLocationPayload(): EmergencyControllerLocationPayload | null {
+    const includeBreadcrumbs = settingsService.getSettings().breadcrumbTrackingEnabled;
+    const breadcrumbTrail = includeBreadcrumbs ? locationService.getBreadcrumbTrail(10) : [];
+    const lastPoint = breadcrumbTrail[breadcrumbTrail.length - 1];
+
+    if (!lastPoint) {
+      return null;
+    }
+
+    return {
+      latitude: lastPoint.latitude,
+      longitude: lastPoint.longitude,
+      timestamp: lastPoint.timestamp,
+      breadcrumbTrail,
+    };
+  }
+
+  private async sendAlertInBackground(
+    triggeredAt: number,
+    immediateLocation: EmergencyControllerLocationPayload | null
+  ): Promise<void> {
+    const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
+    const payload = {
+      deviceId: DEFAULT_DEVICE_ID,
+      status: 'TRIGGERED' as const,
+      triggeredAt,
+      location: resolvedLocation,
+    };
+
+    await this.sendAlertRequest(payload);
   }
 
   private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
