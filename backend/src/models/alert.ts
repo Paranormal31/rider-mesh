@@ -1,6 +1,11 @@
 import mongoose, { Schema, type InferSchemaType } from 'mongoose';
 
-import type { AlertRecord, AlertStatus, CreateAlertPersistenceInput } from '../types/alert';
+import type {
+  AcceptAlertFailureCode,
+  AlertRecord,
+  AlertStatus,
+  CreateAlertPersistenceInput,
+} from '../types/alert';
 import { ALERT_STATUSES } from '../types/alert';
 
 const breadcrumbPointSchema = new Schema(
@@ -46,6 +51,17 @@ const alertSchema = new Schema(
       required: false,
       default: null,
     },
+    responderDeviceId: {
+      type: String,
+      required: false,
+      default: null,
+      trim: true,
+    },
+    assignedAt: {
+      type: Number,
+      required: false,
+      default: null,
+    },
     createdAt: { type: Number, required: true },
     updatedAt: { type: Number, required: true },
   },
@@ -83,6 +99,8 @@ function mapAlertDocument(document: AlertDocument): AlertRecord {
           })),
         }
       : null,
+    responderDeviceId: document.responderDeviceId ?? null,
+    assignedAt: document.assignedAt ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
@@ -94,9 +112,78 @@ export async function createAlertRecord(input: CreateAlertPersistenceInput): Pro
   const document = await AlertModel.create({
     ...input,
     location: input.location,
+    responderDeviceId: null,
+    assignedAt: null,
     createdAt: nowMs,
     updatedAt: nowMs,
   });
 
   return mapAlertDocument(document.toObject() as AlertDocument);
+}
+
+export type AcceptAlertRecordResult =
+  | { ok: true; record: AlertRecord }
+  | { ok: false; code: AcceptAlertFailureCode; record: AlertRecord | null };
+
+const CLAIMABLE_STATUSES: AlertStatus[] = ['TRIGGERED', 'DISPATCHING', 'DISPATCHED'];
+
+export async function acceptAlertRecord(input: {
+  alertId: string;
+  responderDeviceId: string;
+  assignedAt: number;
+}): Promise<AcceptAlertRecordResult> {
+  if (!mongoose.isValidObjectId(input.alertId)) {
+    return {
+      ok: false,
+      code: 'ALERT_NOT_FOUND',
+      record: null,
+    };
+  }
+
+  const updated = await AlertModel.findOneAndUpdate(
+    {
+      _id: input.alertId,
+      status: { $in: CLAIMABLE_STATUSES },
+      responderDeviceId: null,
+    },
+    {
+      $set: {
+        responderDeviceId: input.responderDeviceId,
+        assignedAt: input.assignedAt,
+        status: 'RESPONDER_ASSIGNED',
+        updatedAt: Date.now(),
+      },
+    },
+    { new: true }
+  ).lean<AlertDocument | null>();
+
+  if (updated) {
+    return {
+      ok: true,
+      record: mapAlertDocument(updated),
+    };
+  }
+
+  const existing = await AlertModel.findById(input.alertId).lean<AlertDocument | null>();
+  if (!existing) {
+    return {
+      ok: false,
+      code: 'ALERT_NOT_FOUND',
+      record: null,
+    };
+  }
+
+  if (existing.responderDeviceId) {
+    return {
+      ok: false,
+      code: 'ALERT_ALREADY_ASSIGNED',
+      record: mapAlertDocument(existing),
+    };
+  }
+
+  return {
+    ok: false,
+    code: 'ALERT_NOT_CLAIMABLE',
+    record: mapAlertDocument(existing),
+  };
 }

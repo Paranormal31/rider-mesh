@@ -179,6 +179,7 @@ export function HomeScreen() {
       offHazardRemoved();
       clearInterval(positionTimer);
       emergencyControllerService.stop();
+      riderHeartbeatService.stop();
     };
   }, [router]);
 

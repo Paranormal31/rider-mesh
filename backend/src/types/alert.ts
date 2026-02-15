@@ -33,12 +33,20 @@ export interface CreateAlertPersistenceInput {
   location: AlertLocation | null;
 }
 
+export interface AcceptAlertPersistenceInput {
+  alertId: string;
+  responderDeviceId: string;
+  assignedAt: number;
+}
+
 export interface AlertRecord {
   id: string;
   deviceId: string;
   status: AlertStatus;
   triggeredAt: number;
   location: AlertLocation | null;
+  responderDeviceId?: string | null;
+  assignedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -80,3 +88,9 @@ export interface InternalErrorResponse {
     message: 'Failed to persist alert';
   };
 }
+
+export interface AcceptAlertRequest {
+  responderDeviceId: string;
+}
+
+export type AcceptAlertFailureCode = 'ALERT_NOT_FOUND' | 'ALERT_ALREADY_ASSIGNED' | 'ALERT_NOT_CLAIMABLE';

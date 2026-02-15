@@ -1,11 +1,17 @@
 import type { Server } from 'node:http';
+import { createServer } from 'node:http';
 
 import { createApp } from './app';
 import { connectToDatabase, disconnectFromDatabase, readDbHealth } from './config/db';
-import { createAlertRecord } from './models/alert';
+import { acceptAlertRecord, createAlertRecord } from './models/alert';
+import { listActiveRiders, upsertRiderHeartbeat } from './models/rider';
+import { findNearbyRidersForAlert } from './services/dispatchService';
+import { SocketHub } from './socket/hub';
 import { loadEnv } from './config/env';
 
 const processStartedAtMs = Date.now();
+const RIDER_ACTIVE_WINDOW_MS = 60_000;
+const DISPATCH_RADIUS_METERS = 1_000;
 
 function processUptimeSec(): number {
   return Math.max(0, Number(((Date.now() - processStartedAtMs) / 1000).toFixed(3)));
@@ -23,6 +29,7 @@ function loadEnvOrExit(): ReturnType<typeof loadEnv> {
 
 async function bootstrap(): Promise<void> {
   const env = loadEnvOrExit();
+  const socketHub = new SocketHub();
 
   try {
     await connectToDatabase(env.mongodbUri);
@@ -39,12 +46,29 @@ async function bootstrap(): Promise<void> {
   const app = createApp({
     getDbHealth: readDbHealth,
     createAlert: createAlertRecord,
+    acceptAlert: acceptAlertRecord,
+    upsertHeartbeat: upsertRiderHeartbeat,
+    onAlertCreated: async (alert) => {
+      const riders = await listActiveRiders(Date.now() - RIDER_ACTIVE_WINDOW_MS);
+      const nearbyMatches = findNearbyRidersForAlert({
+        alert,
+        riders,
+        radiusMeters: DISPATCH_RADIUS_METERS,
+      });
+      socketHub.emitNearbyAlert(alert, nearbyMatches);
+    },
+    onAlertAssigned: (alert) => {
+      socketHub.emitAlertAssigned(alert);
+    },
     now: () => new Date(),
     uptimeSec: processUptimeSec,
     corsOrigins: env.corsOrigins,
   });
 
-  const server = app.listen(env.port, () => {
+  const server = createServer(app);
+  socketHub.init(server, env.corsOrigins);
+
+  server.listen(env.port, () => {
     console.log(`[startup] Backend listening on http://localhost:${env.port}`);
   });
 
