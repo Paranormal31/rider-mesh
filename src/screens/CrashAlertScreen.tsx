@@ -24,9 +24,6 @@ export function CrashAlertScreen() {
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('MONITORING');
-      if (router.canGoBack()) {
-        router.back();
-      }
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setState('ALERT_SENT');
@@ -45,6 +42,8 @@ export function CrashAlertScreen() {
     if (state !== 'COUNTDOWN_ACTIVE' && state !== 'CRASH_DETECTED') {
       if (router.canGoBack()) {
         router.back();
+      } else {
+        router.replace('/(tabs)');
       }
     }
   }, [router, state]);
