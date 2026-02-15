@@ -88,7 +88,7 @@ export function HomeScreen() {
         }
       } catch {
         if (active) {
-          setControllerState('MONITORING');
+          setControllerState('NORMAL');
         }
       }
     };
@@ -98,8 +98,16 @@ export function HomeScreen() {
     const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
       crashDetectionService.applySensitivity(settings.sensitivity);
     });
+    const offPreDelay = emergencyControllerService.on('PRE_DELAY_STARTED', () => {
+      setControllerState('ALERT_PRE_DELAY');
+      if (!crashModalOpen.current) {
+        crashModalOpen.current = true;
+        activeSosModalOpen.current = false;
+        router.push('/crash-alert');
+      }
+    });
     const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setControllerState('COUNTDOWN_ACTIVE');
+      setControllerState('ALERT_PENDING');
       if (!crashModalOpen.current) {
         crashModalOpen.current = true;
         activeSosModalOpen.current = false;
@@ -108,20 +116,17 @@ export function HomeScreen() {
       setElapsedMs(rideSessionService.getElapsedMs() + event.remainingSeconds);
     });
     const offTick = emergencyControllerService.on('COUNTDOWN_TICK', () => {
-      setControllerState('COUNTDOWN_ACTIVE');
+      setControllerState('ALERT_PENDING');
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
-      setControllerState('MONITORING');
+      setControllerState('NORMAL');
       crashModalOpen.current = false;
       activeSosModalOpen.current = false;
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setControllerState(emergencyControllerService.getState());
-      crashModalOpen.current = false;
-      if (!activeSosModalOpen.current) {
-        activeSosModalOpen.current = true;
-        router.push('/active-sos');
-      }
+      crashModalOpen.current = true;
+      activeSosModalOpen.current = false;
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -166,6 +171,7 @@ export function HomeScreen() {
     return () => {
       active = false;
       offSettings();
+      offPreDelay();
       offStarted();
       offTick();
       offCancelled();
@@ -286,7 +292,9 @@ export function HomeScreen() {
             {breadcrumbs.length > 1 && mapModules.Polyline ? (
               <mapModules.Polyline coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
             ) : null}
-            {controllerState === 'ALERT_SENDING' || controllerState === 'ALERT_SENT' ? (
+            {controllerState === 'ALERT_PRE_DELAY' ||
+            controllerState === 'ALERT_PENDING' ||
+            controllerState === 'ALERT_ESCALATED' ? (
               <mapModules.Marker
                 coordinate={currentPosition ?? mapRegion}
                 pinColor="#EF4444"

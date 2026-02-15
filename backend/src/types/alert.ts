@@ -1,5 +1,6 @@
 export const ALERT_STATUSES = [
   'TRIGGERED',
+  'ESCALATED',
   'DISPATCHING',
   'DISPATCHED',
   'RESPONDER_ASSIGNED',
@@ -54,6 +55,15 @@ export interface AlertRecord {
 export interface CreateAlertSuccessResponse {
   requestId: string;
   data: AlertRecord;
+}
+
+export interface UpdateAlertStatusRequest {
+  status: AlertStatus;
+}
+
+export interface UpdateAlertStatusResponse {
+  requestId: string;
+  data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'>;
 }
 
 export type ValidationIssueCode =
