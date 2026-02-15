@@ -10,11 +10,15 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="index" options={{ title: 'Home' }} />
-        <Stack.Screen name="emergency-contacts" options={{ title: 'Emergency Contacts' }} />
-        <Stack.Screen name="responder-inbox" options={{ title: 'Responder Inbox' }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(onboarding)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="emergency-contacts" options={{ headerShown: true, title: 'Emergency Contacts' }} />
+        <Stack.Screen name="crash-alert" options={{ presentation: 'modal', headerShown: false }} />
+        <Stack.Screen name="active-sos" options={{ presentation: 'modal', headerShown: false }} />
+        <Stack.Screen name="sos-received" options={{ headerShown: true, title: 'SOS Received' }} />
+        <Stack.Screen name="ride-summary" options={{ headerShown: true, title: 'Ride Summary' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

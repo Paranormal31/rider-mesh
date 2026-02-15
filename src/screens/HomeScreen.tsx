@@ -1,447 +1,475 @@
-import { useEffect, useState } from 'react';
+import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { StatusBadge } from '@/src/components/ui';
 import {
   crashDetectionService,
   emergencyControllerService,
+  hazardService,
   locationService,
-  riderHeartbeatService,
-  type EmergencyControllerLocationPayload,
+  networkMeshService,
+  profileService,
+  rideSessionService,
   settingsService,
-  type CrashDetectionPhase,
-  type EmergencyControllerState,
-  type PhaseChangeReason,
+  type HazardRecord,
+  type NetworkMeshStatus,
+  type RideSession,
 } from '@/src/services';
+
+type Position = { latitude: number; longitude: number };
+
+type MapModules = {
+  available: boolean;
+  MapView?: ComponentType<any>;
+  Marker?: ComponentType<any>;
+  Polyline?: ComponentType<any>;
+};
+
+function loadMapModules(): MapModules {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const maps = require('react-native-maps');
+    return {
+      available: true,
+      MapView: maps.default,
+      Marker: maps.Marker,
+      Polyline: maps.Polyline,
+    };
+  } catch {
+    return { available: false };
+  }
+}
 
 export function HomeScreen() {
   const router = useRouter();
-  const [state, setState] = useState<EmergencyControllerState>(
-    emergencyControllerService.getState()
-  );
-  const [detectorPhase, setDetectorPhase] = useState<CrashDetectionPhase>(
-    crashDetectionService.getPhase()
-  );
-  const [remainingSeconds, setRemainingSeconds] = useState(
-    emergencyControllerService.getCountdownRemainingSeconds()
-  );
-  const [isDebugVisible, setIsDebugVisible] = useState(false);
-  const [isDebugMenuOpen, setIsDebugMenuOpen] = useState(false);
-  const [alertLocation, setAlertLocation] = useState<EmergencyControllerLocationPayload | null>(null);
-  const [liveLocation, setLiveLocation] = useState<EmergencyControllerLocationPayload | null>(null);
-  const [liveBreadcrumbCount, setLiveBreadcrumbCount] = useState(0);
-  const [lastPhaseReason, setLastPhaseReason] = useState<PhaseChangeReason | null>(null);
-  const [lastPhaseChangedAt, setLastPhaseChangedAt] = useState<number | null>(null);
-  const [responderAssignedMeta, setResponderAssignedMeta] = useState<{
-    responderDeviceId: string;
-    assignedAt: number;
-  } | null>(null);
+  const mapModules = useMemo(loadMapModules, []);
+  const [riderName, setRiderName] = useState('Rider');
+  const [networkStatus, setNetworkStatus] = useState<NetworkMeshStatus>('INTERNET');
+  const [rideSession, setRideSession] = useState<RideSession>(rideSessionService.getCurrentSession());
+  const [elapsedMs, setElapsedMs] = useState(rideSessionService.getElapsedMs());
+  const [hazards, setHazards] = useState<HazardRecord[]>([]);
+  const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
+  const [breadcrumbs, setBreadcrumbs] = useState<Position[]>([]);
+  const [controllerState, setControllerState] = useState(emergencyControllerService.getState());
+
+  const crashModalOpen = useRef(false);
+  const activeSosModalOpen = useRef(false);
+  const contentFade = useRef(new Animated.Value(0)).current;
+  const sosPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     let active = true;
 
-    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
-      setState('COUNTDOWN_ACTIVE');
-      setRemainingSeconds(event.remainingSeconds);
-    });
-    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', (event) => {
-      setState('COUNTDOWN_ACTIVE');
-      setRemainingSeconds(event.remainingSeconds);
-    });
-    const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', (event) => {
-      setAlertLocation(event.location);
-      setState('ALERT_SENT');
-      setRemainingSeconds(0);
-    });
-    const offCancelled = emergencyControllerService.on('CANCELLED', () => {
-      setState('MONITORING');
-      setRemainingSeconds(0);
-    });
-    const offResponderAssigned = emergencyControllerService.on('RESPONDER_ASSIGNED', (event) => {
-      setState('RESPONDER_ASSIGNED');
-      setResponderAssignedMeta({
-        responderDeviceId: event.responderDeviceId,
-        assignedAt: event.assignedAt,
-      });
-    });
-    const offPhase = crashDetectionService.on('DETECTION_PHASE_CHANGED', (event) => {
-      setDetectorPhase(event.toPhase);
-      setLastPhaseReason(event.reason ?? null);
-      setLastPhaseChangedAt(event.timestamp);
-    });
-    const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
-      crashDetectionService.applySensitivity(settings.sensitivity);
-    });
-
-    const boot = async () => {
+    const loadBootstrap = async () => {
       try {
-        const settings = await settingsService.loadSettings();
+        const [settings, profile, loadedHazards] = await Promise.all([
+          settingsService.loadSettings(),
+          profileService.getProfile(),
+          hazardService.listHazards(),
+          rideSessionService.load(),
+          networkMeshService.load(),
+        ]);
+
         crashDetectionService.applySensitivity(settings.sensitivity);
         await emergencyControllerService.start();
-        await riderHeartbeatService.start();
-        if (active) {
-          setState(emergencyControllerService.getState());
-          setDetectorPhase(crashDetectionService.getPhase());
+
+        if (!active) {
+          return;
+        }
+
+        setControllerState(emergencyControllerService.getState());
+        setNetworkStatus(networkMeshService.getStatus());
+        setRideSession(rideSessionService.getCurrentSession());
+        setElapsedMs(rideSessionService.getElapsedMs());
+        setHazards(loadedHazards);
+        if (profile?.name) {
+          setRiderName(profile.name);
         }
       } catch {
         if (active) {
-          setState('MONITORING');
+          setControllerState('MONITORING');
         }
       }
     };
 
-    void boot();
+    void loadBootstrap();
+
+    const offSettings = settingsService.on('SETTINGS_CHANGED', ({ settings }) => {
+      crashDetectionService.applySensitivity(settings.sensitivity);
+    });
+    const offStarted = emergencyControllerService.on('COUNTDOWN_STARTED', (event) => {
+      setControllerState('COUNTDOWN_ACTIVE');
+      if (!crashModalOpen.current) {
+        crashModalOpen.current = true;
+        activeSosModalOpen.current = false;
+        router.push('/crash-alert');
+      }
+      setElapsedMs(rideSessionService.getElapsedMs() + event.remainingSeconds);
+    });
+    const offTick = emergencyControllerService.on('COUNTDOWN_TICK', () => {
+      setControllerState('COUNTDOWN_ACTIVE');
+    });
+    const offCancelled = emergencyControllerService.on('CANCELLED', () => {
+      setControllerState('MONITORING');
+      crashModalOpen.current = false;
+      activeSosModalOpen.current = false;
+    });
+    const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
+      setControllerState(emergencyControllerService.getState());
+      crashModalOpen.current = false;
+      if (!activeSosModalOpen.current) {
+        activeSosModalOpen.current = true;
+        router.push('/active-sos');
+      }
+    });
+    const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
+      setNetworkStatus(status);
+    });
+    const offRideTick = rideSessionService.on('RIDE_TICK', (event) => {
+      setElapsedMs(event.elapsedMs);
+    });
+    const offRideStarted = rideSessionService.on('RIDE_STARTED', ({ session }) => {
+      setRideSession(session);
+      setElapsedMs(rideSessionService.getElapsedMs());
+    });
+    const offRideEnded = rideSessionService.on('RIDE_ENDED', ({ session }) => {
+      setRideSession(session);
+      setElapsedMs(0);
+    });
+    const offRideEndedWithSummary = rideSessionService.on('RIDE_ENDED', ({ summary }) => {
+      router.push({ pathname: '/ride-summary', params: { summaryId: summary.id } });
+    });
+    const offHazardAdded = hazardService.on('HAZARD_ADDED', ({ hazard }) => {
+      setHazards((prev) => [hazard, ...prev]);
+    });
+    const offHazardRemoved = hazardService.on('HAZARD_REMOVED', ({ id }) => {
+      setHazards((prev) => prev.filter((item) => item.id !== id));
+    });
+
+    const positionTimer = setInterval(() => {
+      locationService
+        .getCurrentLocation()
+        .then((point) => {
+          if (!active) {
+            return;
+          }
+          setCurrentPosition({ latitude: point.latitude, longitude: point.longitude });
+          const trail = locationService
+            .getBreadcrumbTrail(20)
+            .map((item) => ({ latitude: item.latitude, longitude: item.longitude }));
+          setBreadcrumbs(trail);
+        })
+        .catch(() => {});
+    }, 3000);
 
     return () => {
       active = false;
+      offSettings();
       offStarted();
       offTick();
-      offAlert();
       offCancelled();
-      offResponderAssigned();
-      offPhase();
-      offSettings();
+      offAlert();
+      offNetwork();
+      offRideTick();
+      offRideStarted();
+      offRideEnded();
+      offRideEndedWithSummary();
+      offHazardAdded();
+      offHazardRemoved();
+      clearInterval(positionTimer);
       emergencyControllerService.stop();
       riderHeartbeatService.stop();
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
-    const refreshLiveLocation = () => {
-      void locationService
-        .getCurrentLocation()
-        .then((point) => {
-          setLiveLocation({
-            ...point,
-            breadcrumbTrail: [],
-          });
-        })
-        .catch(() => {
-          setLiveLocation(null);
-        })
-        .finally(() => {
-          setLiveBreadcrumbCount(locationService.getBreadcrumbTrail(10).length);
-        });
-    };
+    Animated.timing(contentFade, {
+      toValue: 1,
+      duration: 450,
+      useNativeDriver: true,
+    }).start();
 
-    refreshLiveLocation();
-    const timer = setInterval(refreshLiveLocation, 3000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sosPulse, { toValue: 1.06, duration: 700, useNativeDriver: true }),
+        Animated.timing(sosPulse, { toValue: 1.0, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [contentFade, sosPulse]);
 
-  const breadcrumbTrail = alertLocation?.breadcrumbTrail ?? [];
-  const breadcrumbCount = breadcrumbTrail.length;
-  const firstBreadcrumb = breadcrumbTrail[0] ?? null;
-  const lastBreadcrumb = breadcrumbTrail[breadcrumbTrail.length - 1] ?? null;
-
-  const isCountdownActive = state === 'COUNTDOWN_ACTIVE';
-  const isAlertTriggered = state === 'ALERT_SENDING' || state === 'ALERT_SENT';
-  const isAlertSent = state === 'ALERT_SENT';
-
-  const formatPoint = (point: { latitude: number; longitude: number; timestamp: number } | null) => {
-    if (!point) {
-      return 'None';
-    }
-
-    return `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)} @ ${new Date(
-      point.timestamp
-    ).toLocaleTimeString()}`;
-  };
-
-  const renderBreadcrumbDebug = () => (
-    <View style={styles.debugPanel}>
-      <Text style={styles.debugTitle}>Breadcrumb Debug</Text>
-      <Text style={styles.debugText}>
-        Live Current Location:{' '}
-        {liveLocation
-          ? `${liveLocation.latitude.toFixed(6)}, ${liveLocation.longitude.toFixed(6)} @ ${new Date(
-              liveLocation.timestamp
-            ).toLocaleTimeString()}`
-          : 'Location: unavailable'}
-      </Text>
-      <Text style={styles.debugText}>Live Breadcrumb Count: {liveBreadcrumbCount}</Text>
-      <Text style={styles.debugText}>
-        Alert Payload Location:{' '}
-        {alertLocation
-          ? `${alertLocation.latitude.toFixed(6)}, ${alertLocation.longitude.toFixed(6)} @ ${new Date(
-              alertLocation.timestamp
-            ).toLocaleTimeString()}`
-          : 'Location: unavailable'}
-      </Text>
-      <Text style={styles.debugText}>Breadcrumb Count: {breadcrumbCount}</Text>
-      <Text style={styles.debugText}>First Breadcrumb: {formatPoint(firstBreadcrumb)}</Text>
-      <Text style={styles.debugText}>Last Breadcrumb: {formatPoint(lastBreadcrumb)}</Text>
-    </View>
+  const mapRegion = useMemo(
+    () => ({
+      latitude: currentPosition?.latitude ?? 28.6139,
+      longitude: currentPosition?.longitude ?? 77.209,
+      latitudeDelta: 0.02,
+      longitudeDelta: 0.02,
+    }),
+    [currentPosition]
   );
 
-  const handleRefreshAfterAlert = () => {
-    setState('MONITORING');
-    setRemainingSeconds(0);
-    setAlertLocation(null);
-    setResponderAssignedMeta(null);
+  const fatigueLevel = useMemo(() => {
+    const mins = Math.floor(elapsedMs / 60000);
+    if (mins >= 120) {
+      return 'High';
+    }
+    if (mins >= 60) {
+      return 'Moderate';
+    }
+    return 'Low';
+  }, [elapsedMs]);
+
+  const networkVariant = useMemo(() => {
+    if (networkStatus === 'INTERNET') {
+      return 'internet' as const;
+    }
+    if (networkStatus === 'MESH_ONLY') {
+      return 'mesh' as const;
+    }
+    return 'offline' as const;
+  }, [networkStatus]);
+
+  const onToggleRide = () => {
+    if (rideSession.state === 'ACTIVE') {
+      void rideSessionService.endRide();
+      return;
+    }
+    void rideSessionService.startRide();
   };
 
-  const handleDebugMenuToggle = () => {
-    setIsDebugMenuOpen((prev) => !prev);
+  const onAddHazard = async () => {
+    const point = currentPosition;
+    if (!point) {
+      return;
+    }
+    await hazardService.addHazard({
+      type: 'POTHOLE',
+      latitude: point.latitude,
+      longitude: point.longitude,
+    });
   };
 
-  const handleDebugVisibilityToggle = () => {
-    setIsDebugVisible((prev) => !prev);
-    setIsDebugMenuOpen(false);
+  const onManualSos = async () => {
+    const sent = await emergencyControllerService.triggerManualSos();
+    if (sent) {
+      activeSosModalOpen.current = true;
+      router.push('/active-sos');
+    }
   };
 
   return (
-    <View
-      style={[
-        styles.container,
-        isCountdownActive && styles.countdownContainer,
-        isAlertTriggered && styles.alertContainer,
-      ]}>
-      <View style={styles.debugMenuAnchor}>
-        <Pressable style={styles.debugMenuTrigger} onPress={handleDebugMenuToggle}>
-          <Text style={styles.debugMenuTriggerText}>⋮</Text>
-        </Pressable>
-        {isDebugMenuOpen && (
-          <View style={styles.debugMenu}>
-            <Pressable style={styles.debugMenuItem} onPress={handleDebugVisibilityToggle}>
-              <Text style={styles.debugMenuItemText}>
-                {isDebugVisible ? 'Hide Debug' : 'Show Debug'}
-              </Text>
-            </Pressable>
+    <Animated.View style={[styles.container, { opacity: contentFade }]}>
+      <View style={styles.topBar}>
+        <Text style={styles.riderName}>{riderName}</Text>
+        <Animated.View style={{ transform: [{ scale: sosPulse }] }}>
+          <StatusBadge variant={networkVariant} />
+        </Animated.View>
+      </View>
+
+      <View style={styles.mapCard}>
+        {mapModules.available && mapModules.MapView && mapModules.Marker ? (
+          <mapModules.MapView style={styles.map} initialRegion={mapRegion} region={mapRegion}>
+            {currentPosition ? <mapModules.Marker coordinate={currentPosition} title="You" /> : null}
+            {hazards.map((hazard) => (
+              <mapModules.Marker
+                key={hazard.id}
+                coordinate={{ latitude: hazard.latitude, longitude: hazard.longitude }}
+                pinColor="#F59E0B"
+                title={hazard.type}
+              />
+            ))}
+            {breadcrumbs.length > 1 && mapModules.Polyline ? (
+              <mapModules.Polyline coordinates={breadcrumbs} strokeColor="#22D3EE" strokeWidth={3} />
+            ) : null}
+            {controllerState === 'ALERT_SENDING' || controllerState === 'ALERT_SENT' ? (
+              <mapModules.Marker
+                coordinate={currentPosition ?? mapRegion}
+                pinColor="#EF4444"
+                title="SOS Active"
+                opacity={Math.floor(Date.now() / 500) % 2 === 0 ? 1 : 0.4}
+              />
+            ) : null}
+          </mapModules.MapView>
+        ) : (
+          <View style={styles.mapFallback}>
+            <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
+            <Text style={styles.mapFallbackText}>
+              This build does not include native maps. Use a dev build for live map rendering.
+            </Text>
           </View>
         )}
       </View>
-      {isCountdownActive ? (
-        <>
-          <Text style={styles.mainText}>CRASH DETECTED</Text>
-          <Text style={styles.countdownText}>{remainingSeconds}</Text>
-          <Pressable style={styles.cancelButton} onPress={() => emergencyControllerService.cancel()}>
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+
+      <View style={styles.statusCard}>
+        <Text style={styles.statusTitle}>Ride Status</Text>
+        <Text style={styles.statusText}>Ride Time: {formatDuration(elapsedMs)}</Text>
+        <Text style={styles.statusText}>Fatigue Level: {fatigueLevel}</Text>
+        <Text style={styles.statusText}>Mesh Status: {networkStatus}</Text>
+      </View>
+
+      <View style={styles.actionBar}>
+        <Pressable style={styles.primaryAction} onPress={onToggleRide}>
+          <Text style={styles.primaryActionText}>{rideSession.state === 'ACTIVE' ? 'End Ride' : 'Start Ride'}</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryAction} onPress={() => void onAddHazard()}>
+          <Text style={styles.secondaryActionText}>Report Hazard</Text>
+        </Pressable>
+        <Animated.View style={{ transform: [{ scale: sosPulse }] }}>
+          <Pressable style={styles.dangerAction} onPress={() => void onManualSos()}>
+            <Text style={styles.dangerActionText}>Manual SOS</Text>
           </Pressable>
-        </>
-      ) : isAlertTriggered ? (
-        <>
-          <Text style={styles.mainText}>ALERT TRIGGERED</Text>
-          {isAlertSent && (
-            <>
-              <Pressable style={styles.refreshButton} onPress={handleRefreshAfterAlert}>
-                <Text style={styles.refreshButtonText}>Refresh Test</Text>
-              </Pressable>
-              {isDebugVisible && renderBreadcrumbDebug()}
-            </>
-          )}
-        </>
-      ) : state === 'RESPONDER_ASSIGNED' ? (
-        <>
-          <Text style={styles.mainText}>RESPONDER ASSIGNED</Text>
-          {responderAssignedMeta && (
-            <Text style={styles.stateText}>
-              {`Responder: ${responderAssignedMeta.responderDeviceId} @ ${new Date(
-                responderAssignedMeta.assignedAt
-              ).toLocaleTimeString()}`}
-            </Text>
-          )}
-          <Pressable style={styles.refreshButton} onPress={handleRefreshAfterAlert}>
-            <Text style={styles.refreshButtonText}>Back To Monitoring</Text>
-          </Pressable>
-          {isDebugVisible && renderBreadcrumbDebug()}
-        </>
-      ) : (
-        <>
-          <Text style={styles.title}>Rider Saathi</Text>
-          <Text style={styles.subtitle}>Monitoring for crash events.</Text>
-          <Text style={styles.stateText}>State: {state}</Text>
-          <Text style={styles.stateText}>Detector Phase: {detectorPhase}</Text>
-          <Text style={styles.phaseMetaText}>
-            Last Phase Event: {lastPhaseReason ?? 'None'}{' '}
-            {lastPhaseChangedAt ? `@ ${new Date(lastPhaseChangedAt).toLocaleTimeString()}` : ''}
-          </Text>
-          <Pressable style={styles.contactsButton} onPress={() => router.push('/emergency-contacts')}>
-            <Text style={styles.contactsButtonText}>Emergency Contacts</Text>
-          </Pressable>
-          <Pressable style={styles.inboxButton} onPress={() => router.push('/responder-inbox')}>
-            <Text style={styles.inboxButtonText}>Responder Inbox</Text>
-          </Pressable>
-          {isDebugVisible && renderBreadcrumbDebug()}
-          <Pressable style={styles.settingsButton} onPress={() => router.push('/settings')}>
-            <Text style={styles.settingsButtonText}>Settings</Text>
-          </Pressable>
-        </>
-      )}
-    </View>
+        </Animated.View>
+      </View>
+
+      <View style={styles.linksRow}>
+        <Pressable style={styles.linkButton} onPress={() => router.push('/emergency-contacts')}>
+          <Text style={styles.linkText}>Emergency Contacts</Text>
+        </Pressable>
+        <Pressable style={styles.linkButton} onPress={() => router.push('/sos-received')}>
+          <Text style={styles.linkText}>SOS Received</Text>
+        </Pressable>
+      </View>
+      <View style={styles.linksRow}>
+        <Pressable style={styles.linkButton} onPress={() => router.push('/(tabs)/settings')}>
+          <Text style={styles.linkText}>Settings</Text>
+        </Pressable>
+        <Pressable style={styles.linkButton} onPress={() => router.push('/(tabs)/ride-history')}>
+          <Text style={styles.linkText}>Ride History</Text>
+        </Pressable>
+      </View>
+    </Animated.View>
   );
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#030712',
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    gap: 18,
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 14,
+    gap: 12,
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  countdownContainer: {
-    backgroundColor: '#B91C1C',
+  riderName: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '800',
   },
-  alertContainer: {
-    backgroundColor: '#7F1D1D',
-  },
-  debugMenuAnchor: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    zIndex: 10,
-    alignItems: 'flex-end',
-  },
-  debugMenuTrigger: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(17, 24, 39, 0.5)',
-    borderWidth: 1,
-    borderColor: 'rgba(156, 163, 175, 0.3)',
-  },
-  debugMenuTriggerText: {
-    color: '#E5E7EB',
-    fontSize: 18,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  debugMenu: {
-    marginTop: 8,
-    backgroundColor: '#111827',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#374151',
-    minWidth: 120,
+  mapCard: {
+    height: 250,
+    borderRadius: 14,
     overflow: 'hidden',
-  },
-  debugMenuItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  debugMenuItemText: {
-    color: '#E5E7EB',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 30,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  subtitle: {
-    color: '#9CA3AF',
-    fontSize: 16,
-    lineHeight: 22,
-    textAlign: 'center',
-  },
-  stateText: {
-    color: '#E5E7EB',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  phaseMetaText: {
-    color: '#93C5FD',
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  contactsButton: {
-    marginTop: 8,
-    backgroundColor: '#2563EB',
-    borderRadius: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  contactsButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  inboxButton: {
-    backgroundColor: '#0891B2',
-    borderRadius: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  inboxButtonText: {
-    color: '#ECFEFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  settingsButton: {
-    backgroundColor: '#111827',
-    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#374151',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    borderColor: '#1F2937',
   },
-  settingsButtonText: {
-    color: '#E5E7EB',
-    fontSize: 14,
-    fontWeight: '700',
+  map: {
+    flex: 1,
   },
-  mainText: {
-    color: '#FFFFFF',
-    fontSize: 44,
-    fontWeight: '900',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  countdownText: {
-    color: '#FEE2E2',
-    fontSize: 72,
-    fontWeight: '900',
-    lineHeight: 78,
-  },
-  cancelButton: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-  },
-  cancelButtonText: {
-    color: '#7F1D1D',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  debugPanel: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    padding: 14,
+  mapFallback: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
     gap: 6,
   },
-  debugTitle: {
-    color: '#93C5FD',
-    fontSize: 14,
+  mapFallbackTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
     fontWeight: '800',
-    marginBottom: 4,
   },
-  debugText: {
-    color: '#E5E7EB',
+  mapFallbackText: {
+    color: '#9CA3AF',
     fontSize: 13,
+    textAlign: 'center',
     lineHeight: 18,
   },
-  refreshButton: {
-    backgroundColor: '#10B981',
+  statusCard: {
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#1F2937',
     borderRadius: 12,
-    paddingHorizontal: 22,
-    paddingVertical: 10,
+    padding: 12,
+    gap: 4,
   },
-  refreshButtonText: {
-    color: '#062E25',
-    fontSize: 14,
+  statusTitle: {
+    color: '#F9FAFB',
+    fontSize: 16,
     fontWeight: '800',
+  },
+  statusText: {
+    color: '#D1D5DB',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  actionBar: {
+    gap: 10,
+  },
+  primaryAction: {
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  primaryActionText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  secondaryAction: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  secondaryActionText: {
+    color: '#E5E7EB',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  dangerAction: {
+    backgroundColor: '#B91C1C',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  dangerActionText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  linksRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  linkButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  linkText: {
+    color: '#D1D5DB',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
