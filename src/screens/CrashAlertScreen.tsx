@@ -50,6 +50,12 @@ export function CrashAlertScreen() {
   }, [router, state]);
 
   useEffect(() => {
+    if (state === 'COUNTDOWN_ACTIVE' && remainingSeconds <= 0) {
+      router.replace('/active-sos');
+    }
+  }, [remainingSeconds, router, state]);
+
+  useEffect(() => {
     Animated.sequence([
       Animated.timing(countdownScale, { toValue: 1.08, duration: 180, useNativeDriver: true }),
       Animated.timing(countdownScale, { toValue: 1, duration: 180, useNativeDriver: true }),

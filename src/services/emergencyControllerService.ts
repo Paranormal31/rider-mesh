@@ -62,6 +62,7 @@ class EmergencyControllerService {
   private state: EmergencyControllerState = 'MONITORING';
   private countdownRemainingSeconds = 0;
   private countdownStartedAtMs: number | null = null;
+  private countdownDeadlineAtMs: number | null = null;
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private crashUnsubscribe: (() => void) | null = null;
   private settingsUnsubscribe: (() => void) | null = null;
@@ -114,6 +115,7 @@ class EmergencyControllerService {
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.countdownDeadlineAtMs = null;
     this.reentryLockedUntilMs = 0;
     crashDetectionService.stop();
     locationService.stopTracking();
@@ -160,6 +162,7 @@ class EmergencyControllerService {
     this.state = 'MONITORING';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.countdownDeadlineAtMs = null;
     this.reentryLockedUntilMs = 0;
     this.emit('CANCELLED', {
       type: 'CANCELLED',
@@ -205,6 +208,7 @@ class EmergencyControllerService {
 
     this.clearCountdownTimer();
     this.countdownRemainingSeconds = 0;
+    this.countdownDeadlineAtMs = null;
     await this.triggerAlert();
     return true;
   }
@@ -220,6 +224,7 @@ class EmergencyControllerService {
     this.clearCountdownTimer();
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
+    this.countdownDeadlineAtMs = null;
     await this.triggerAlert();
     return true;
   }
@@ -229,6 +234,7 @@ class EmergencyControllerService {
     this.state = 'COUNTDOWN_ACTIVE';
     this.countdownRemainingSeconds = seconds;
     this.countdownStartedAtMs = Date.now();
+    this.countdownDeadlineAtMs = this.countdownStartedAtMs + seconds * 1000;
 
     this.emit('COUNTDOWN_STARTED', {
       type: 'COUNTDOWN_STARTED',
@@ -237,19 +243,29 @@ class EmergencyControllerService {
     });
 
     this.countdownTimer = setInterval(() => {
-      this.countdownRemainingSeconds -= 1;
+      if (this.countdownDeadlineAtMs === null) {
+        return;
+      }
 
-      if (this.countdownRemainingSeconds > 0) {
+      const msLeft = this.countdownDeadlineAtMs - Date.now();
+      const nextRemaining = Math.max(0, Math.ceil(msLeft / 1000));
+
+      if (nextRemaining !== this.countdownRemainingSeconds) {
+        this.countdownRemainingSeconds = nextRemaining;
         this.emit('COUNTDOWN_TICK', {
           type: 'COUNTDOWN_TICK',
           remainingSeconds: this.countdownRemainingSeconds,
         });
-        return;
       }
 
-      this.clearCountdownTimer();
-      void this.triggerAlert();
-    }, 1000);
+      if (nextRemaining <= 0) {
+        this.clearCountdownTimer();
+        this.countdownRemainingSeconds = 0;
+        this.countdownStartedAtMs = null;
+        this.countdownDeadlineAtMs = null;
+        void this.triggerAlert();
+      }
+    }, 250);
   }
 
   private async triggerAlert(): Promise<void> {
@@ -389,6 +405,7 @@ class EmergencyControllerService {
       clearInterval(this.countdownTimer);
       this.countdownTimer = null;
     }
+    this.countdownDeadlineAtMs = null;
   }
 
   private emit<TEvent extends keyof EmergencyControllerEventMap>(

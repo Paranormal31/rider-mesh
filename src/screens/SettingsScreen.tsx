@@ -87,7 +87,7 @@ export function SettingsScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Settings</Text>
-      <Text style={styles.subtitle}>RiderShield controls and safety preferences.</Text>
+      <Text style={styles.subtitle}>Rider Saathi controls and safety preferences.</Text>
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Safety & Alerts</Text>
