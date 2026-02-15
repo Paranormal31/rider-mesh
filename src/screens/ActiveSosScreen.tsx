@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Animated, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -21,6 +21,13 @@ export function ActiveSosScreen() {
   const [callStateText, setCallStateText] = useState<string>('Ready');
   const pulse = useRef(new Animated.Value(1)).current;
   const lastAlert = emergencyControllerService.getLastAlertEvent();
+  const closeScreen = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)');
+  }, [router]);
 
   useEffect(() => {
     let active = true;
@@ -41,6 +48,7 @@ export function ActiveSosScreen() {
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('MONITORING');
+      closeScreen();
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -64,7 +72,7 @@ export function ActiveSosScreen() {
       clearInterval(timer);
       loop.stop();
     };
-  }, [pulse, router]);
+  }, [closeScreen, pulse, router]);
 
   useEffect(() => {
     if (
@@ -74,13 +82,9 @@ export function ActiveSosScreen() {
       state !== 'CRASH_DETECTED' &&
       state !== 'COUNTDOWN_ACTIVE'
     ) {
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace('/(tabs)');
-      }
+      closeScreen();
     }
-  }, [router, state]);
+  }, [closeScreen, state]);
 
   const escalationSeconds = useMemo(() => {
     if (!lastAlert?.triggeredAt) {
