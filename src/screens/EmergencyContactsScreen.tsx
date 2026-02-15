@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -9,7 +10,13 @@ import {
   View,
 } from 'react-native';
 
-import { emergencyContactsService, type EmergencyContact } from '@/src/services';
+import {
+  EMERGENCY_CONTACT_MAX_NAME_LENGTH,
+  emergencyContactsService,
+  type AddContactError,
+  type EmergencyContact,
+  type UpdateContactError,
+} from '@/src/services';
 
 const MAX_CONTACTS = 3;
 
@@ -17,6 +24,7 @@ export function EmergencyContactsScreen() {
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [nameInput, setNameInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,18 +58,48 @@ export function EmergencyContactsScreen() {
     };
   }, []);
 
+  const isEditing = editingContactId !== null;
   const isAtMaxContacts = contacts.length >= MAX_CONTACTS;
-  const addButtonDisabled = isLoading || isSubmitting || isAtMaxContacts;
+  const submitButtonDisabled = isLoading || isSubmitting || (!isEditing && isAtMaxContacts);
+  const rowActionsDisabled = isLoading || isSubmitting;
 
   const helperText = useMemo(() => {
-    if (isAtMaxContacts) {
+    if (!isEditing && isAtMaxContacts) {
       return 'Maximum of 3 emergency contacts reached.';
     }
     return null;
-  }, [isAtMaxContacts]);
+  }, [isAtMaxContacts, isEditing]);
 
-  const onAddContact = async () => {
-    if (addButtonDisabled) {
+  const clearForm = () => {
+    setEditingContactId(null);
+    setNameInput('');
+    setPhoneInput('');
+  };
+
+  const onStartEdit = (contact: EmergencyContact) => {
+    if (rowActionsDisabled) {
+      return;
+    }
+
+    setStorageError(null);
+    setFormError(null);
+    setEditingContactId(contact.id);
+    setNameInput(contact.name);
+    setPhoneInput(contact.phone);
+  };
+
+  const onCancelEdit = () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    setStorageError(null);
+    setFormError(null);
+    clearForm();
+  };
+
+  const onSubmitContact = async () => {
+    if (submitButtonDisabled) {
       return;
     }
 
@@ -69,10 +107,13 @@ export function EmergencyContactsScreen() {
     setStorageError(null);
     setIsSubmitting(true);
 
-    const result = emergencyContactsService.addContact(
-      { name: nameInput, phone: phoneInput },
-      contacts
-    );
+    const result =
+      editingContactId !== null
+        ? emergencyContactsService.updateContact(
+            { id: editingContactId, name: nameInput, phone: phoneInput },
+            contacts
+          )
+        : emergencyContactsService.addContact({ name: nameInput, phone: phoneInput }, contacts);
 
     if (!result.ok) {
       setFormError(getFormErrorMessage(result.error));
@@ -83,8 +124,7 @@ export function EmergencyContactsScreen() {
     try {
       await emergencyContactsService.saveContacts(result.contacts);
       setContacts(result.contacts);
-      setNameInput('');
-      setPhoneInput('');
+      clearForm();
     } catch {
       setStorageError('Unable to save contacts right now. Please try again.');
     } finally {
@@ -92,18 +132,51 @@ export function EmergencyContactsScreen() {
     }
   };
 
-  const onDeleteContact = async (id: string) => {
+  const onDeleteContact = (contact: EmergencyContact) => {
+    if (rowActionsDisabled) {
+      return;
+    }
+
+    Alert.alert(
+      'Delete contact?',
+      `Delete ${contact.name} (${formatPhoneForDisplay(contact.phone)}) from emergency contacts?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void onDeleteContactConfirmed(contact);
+          },
+        },
+      ]
+    );
+  };
+
+  const onDeleteContactConfirmed = async (contact: EmergencyContact) => {
     setStorageError(null);
 
+    const wasEditingDeletedContact = editingContactId === contact.id;
+    const previousEditingContactId = editingContactId;
+    const previousNameInput = nameInput;
+    const previousPhoneInput = phoneInput;
     const previousContacts = contacts;
-    const nextContacts = emergencyContactsService.deleteContact(id, previousContacts);
+    const nextContacts = emergencyContactsService.deleteContact(contact.id, previousContacts);
 
+    if (wasEditingDeletedContact) {
+      clearForm();
+    }
     setContacts(nextContacts);
 
     try {
       await emergencyContactsService.saveContacts(nextContacts);
     } catch {
       setContacts(previousContacts);
+      if (wasEditingDeletedContact) {
+        setEditingContactId(previousEditingContactId);
+        setNameInput(previousNameInput);
+        setPhoneInput(previousPhoneInput);
+      }
       setStorageError('Unable to delete contact right now. Please try again.');
     }
   };
@@ -114,6 +187,8 @@ export function EmergencyContactsScreen() {
       <Text style={styles.subtitle}>Add up to 3 trusted contacts for emergency alerts.</Text>
 
       <View style={styles.formCard}>
+        <Text style={styles.formTitle}>{isEditing ? 'Edit Contact' : 'Add Contact'}</Text>
+
         <Text style={styles.label}>Name</Text>
         <TextInput
           value={nameInput}
@@ -123,6 +198,7 @@ export function EmergencyContactsScreen() {
           style={styles.input}
           editable={!isLoading && !isSubmitting}
           autoCapitalize="words"
+          maxLength={EMERGENCY_CONTACT_MAX_NAME_LENGTH}
         />
 
         <Text style={styles.label}>Phone</Text>
@@ -141,13 +217,21 @@ export function EmergencyContactsScreen() {
         {storageError ? <Text style={styles.errorText}>{storageError}</Text> : null}
 
         <Pressable
-          style={[styles.addButton, addButtonDisabled && styles.addButtonDisabled]}
+          style={[styles.submitButton, submitButtonDisabled && styles.submitButtonDisabled]}
           onPress={() => {
-            void onAddContact();
+            void onSubmitContact();
           }}
-          disabled={addButtonDisabled}>
-          <Text style={styles.addButtonText}>{isSubmitting ? 'Saving...' : 'Add Contact'}</Text>
+          disabled={submitButtonDisabled}>
+          <Text style={styles.submitButtonText}>
+            {isSubmitting ? 'Saving...' : isEditing ? 'Update Contact' : 'Add Contact'}
+          </Text>
         </Pressable>
+
+        {isEditing ? (
+          <Pressable style={styles.cancelEditButton} onPress={onCancelEdit} disabled={isSubmitting}>
+            <Text style={styles.cancelEditText}>Cancel Edit</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.listSection}>
@@ -162,20 +246,34 @@ export function EmergencyContactsScreen() {
             data={contacts}
             keyExtractor={(item) => item.id}
             contentContainerStyle={contacts.length === 0 ? styles.emptyListContainer : undefined}
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={<Text style={styles.emptyText}>No emergency contacts added yet.</Text>}
             renderItem={({ item }) => (
               <View style={styles.contactRow}>
                 <View style={styles.contactMeta}>
-                  <Text style={styles.contactName}>{item.name}</Text>
+                  <Text style={styles.contactName} numberOfLines={1} ellipsizeMode="tail">
+                    {item.name}
+                  </Text>
                   <Text style={styles.contactPhone}>{formatPhoneForDisplay(item.phone)}</Text>
                 </View>
-                <Pressable
-                  style={styles.deleteButton}
-                  onPress={() => {
-                    void onDeleteContact(item.id);
-                  }}>
-                  <Text style={styles.deleteText}>Delete</Text>
-                </Pressable>
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    style={styles.editButton}
+                    disabled={rowActionsDisabled}
+                    onPress={() => {
+                      onStartEdit(item);
+                    }}>
+                    <Text style={styles.editText}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.deleteButton, rowActionsDisabled && styles.rowButtonDisabled]}
+                    disabled={rowActionsDisabled}
+                    onPress={() => {
+                      onDeleteContact(item);
+                    }}>
+                    <Text style={styles.deleteText}>Delete</Text>
+                  </Pressable>
+                </View>
               </View>
             )}
           />
@@ -185,10 +283,12 @@ export function EmergencyContactsScreen() {
   );
 }
 
-function getFormErrorMessage(error: string): string {
+function getFormErrorMessage(error: AddContactError | UpdateContactError): string {
   switch (error) {
     case 'EMPTY_NAME':
       return 'Name is required.';
+    case 'NAME_TOO_LONG':
+      return `Name must be ${EMERGENCY_CONTACT_MAX_NAME_LENGTH} characters or fewer.`;
     case 'EMPTY_PHONE':
       return 'Phone number is required.';
     case 'INVALID_PHONE':
@@ -197,8 +297,10 @@ function getFormErrorMessage(error: string): string {
       return 'This phone number is already added.';
     case 'MAX_LIMIT':
       return 'You can add up to 3 emergency contacts.';
+    case 'NOT_FOUND':
+      return 'Contact no longer exists. Refresh and try again.';
     default:
-      return 'Unable to add contact.';
+      return 'Unable to save contact.';
   }
 }
 
@@ -235,8 +337,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#1F2937',
-    padding: 14,
-    gap: 8,
+    padding: 16,
+    gap: 10,
+  },
+  formTitle: {
+    color: '#F9FAFB',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   label: {
     color: '#E5E7EB',
@@ -263,30 +371,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
-  addButton: {
-    marginTop: 8,
+  submitButton: {
+    marginTop: 6,
     backgroundColor: '#2563EB',
     borderRadius: 10,
-    paddingVertical: 11,
+    paddingVertical: 12,
     alignItems: 'center',
   },
-  addButtonDisabled: {
+  submitButtonDisabled: {
     backgroundColor: '#374151',
   },
-  addButtonText: {
+  submitButtonText: {
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
   },
+  cancelEditButton: {
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  cancelEditText: {
+    color: '#D1D5DB',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   listSection: {
     flex: 1,
-    marginTop: 18,
+    marginTop: 22,
   },
   sectionTitle: {
     color: '#F9FAFB',
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   loadingContainer: {
     paddingTop: 24,
@@ -304,17 +424,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1F2937',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 12,
   },
   contactMeta: {
     flex: 1,
-    gap: 2,
+    gap: 4,
+    paddingTop: 2,
   },
   contactName: {
     color: '#FFFFFF',
@@ -325,12 +446,31 @@ const styles = StyleSheet.create({
     color: '#D1D5DB',
     fontSize: 14,
   },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  editButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 11,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+  },
+  editText: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   deleteButton: {
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 11,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#EF4444',
+  },
+  rowButtonDisabled: {
+    opacity: 0.6,
   },
   deleteText: {
     color: '#FCA5A5',

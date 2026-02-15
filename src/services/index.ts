@@ -7,7 +7,11 @@ export type {
   PhaseChangeReason,
   SpikeOrientation,
 } from './crashDetectionService';
-export { emergencyContactsService } from './emergencyContactsService';
+export {
+  EMERGENCY_CONTACT_MAX_NAME_LENGTH,
+  emergencyContactsService,
+} from './emergencyContactsService';
+export type { AddContactError, UpdateContactError } from './emergencyContactsService';
 export { emergencyControllerService } from './emergencyControllerService';
 export type { EmergencyContact } from './emergencyContactsService';
 export type { EmergencyControllerState } from './emergencyControllerService';
