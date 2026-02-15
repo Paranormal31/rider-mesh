@@ -4,10 +4,11 @@ import { type RequestHandler, type Response, Router } from 'express';
 import { isValidObjectId } from 'mongoose';
 
 import type {
-  AlertNotFoundResponse,
+  AcceptAlertFailureCode,
   AlertBreadcrumbPoint,
   AlertLocation,
   AlertRecord,
+  AcceptAlertRequest,
   CreateAlertPersistenceInput,
   CreateAlertSuccessResponse,
   InternalErrorResponse,
@@ -38,17 +39,22 @@ type CreateAlertResult =
 export interface CreateAlertsRouteDeps {
   nowMs: () => number;
   createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
-  updateAlertStatus: (
-    id: string,
-    status: 'CANCELLED' | 'ESCALATED'
-  ) => Promise<
-    | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
-    | { kind: 'not_found' }
-    | { kind: 'blocked'; currentStatus: CreateAlertPersistenceInput['status'] }
-  >;
+  acceptAlert?: (input: { alertId: string; responderDeviceId: string; assignedAt: number }) => Promise<{
+    ok: true;
+    record: AlertRecord;
+  } | {
+    ok: false;
+    code: AcceptAlertFailureCode;
+    record: AlertRecord | null;
+  }>;
+  onAlertCreated?: (alert: AlertRecord) => void | Promise<void>;
+  onAlertAssigned?: (alert: AlertRecord) => void | Promise<void>;
 }
 
 interface ProcessCreateAlertDeps {
+  nowMs: () => number;
+  createAlert: (input: CreateAlertPersistenceInput) => Promise<AlertRecord>;
+  onAlertCreated?: (alert: AlertRecord) => void | Promise<void>;
   payload: unknown;
   requestId: string;
   nowMs: CreateAlertsRouteDeps['nowMs'];
@@ -67,6 +73,22 @@ interface ProcessUpdateAlertStatusDeps {
   requestId: string;
   updateAlertStatus: CreateAlertsRouteDeps['updateAlertStatus'];
 }
+
+type AcceptAlertResult =
+  | { statusCode: 200; body: { requestId: string; data: AlertRecord } }
+  | { statusCode: 400; body: { requestId: string; error: { code: 'VALIDATION_ERROR'; message: string } } }
+  | { statusCode: 404; body: { requestId: string; error: { code: 'ALERT_NOT_FOUND'; message: string } } }
+  | {
+      statusCode: 409;
+      body: {
+        requestId: string;
+        error: {
+          code: 'ALERT_ALREADY_ASSIGNED' | 'ALERT_NOT_CLAIMABLE';
+          message: string;
+        };
+      };
+    }
+  | { statusCode: 500; body: InternalErrorResponse };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -371,6 +393,7 @@ export async function processCreateAlertRequest({
   requestId,
   nowMs,
   createAlert,
+  onAlertCreated,
 }: ProcessCreateAlertDeps): Promise<CreateAlertResult> {
   const validation = validateCreateAlertPayload(payload, nowMs());
 
@@ -390,6 +413,9 @@ export async function processCreateAlertRequest({
 
   try {
     const record = await createAlert(validation.value);
+    if (onAlertCreated) {
+      await onAlertCreated(record);
+    }
     return {
       statusCode: 201,
       body: {
@@ -411,119 +437,119 @@ export async function processCreateAlertRequest({
   }
 }
 
-export async function processUpdateAlertStatusRequest({
-  alertId,
-  payload,
-  requestId,
-  updateAlertStatus,
-}: ProcessUpdateAlertStatusDeps): Promise<UpdateAlertStatusResult> {
-  const details: ValidationIssue[] = [];
-
-  if (!isValidObjectId(alertId)) {
-    details.push({
-      field: 'id',
-      code: 'INVALID_VALUE',
-      message: 'id must be a valid Mongo ObjectId',
-    });
-  }
-
+function validateAcceptAlertPayload(payload: unknown): {
+  ok: true;
+  value: AcceptAlertRequest;
+} | {
+  ok: false;
+  message: string;
+} {
   if (!isPlainObject(payload)) {
-    details.push({
-      field: 'body',
-      code: 'INVALID_TYPE',
-      message: 'Request body must be a JSON object',
-    });
-  } else {
-    pushUnknownFieldIssues(details, payload, new Set(['status']));
-
-    if (!Object.prototype.hasOwnProperty.call(payload, 'status')) {
-      details.push({
-        field: 'status',
-        code: 'REQUIRED_FIELD',
-        message: 'status is required',
-      });
-    } else if (typeof payload.status !== 'string') {
-      details.push({
-        field: 'status',
-        code: 'INVALID_TYPE',
-        message: 'status must be a string',
-      });
-    } else if (!ALERT_STATUSES.includes(payload.status as (typeof ALERT_STATUSES)[number])) {
-      details.push({
-        field: 'status',
-        code: 'INVALID_ENUM',
-        message: `status must be one of: ${ALERT_STATUSES.join(', ')}`,
-      });
-    } else if (payload.status !== 'CANCELLED' && payload.status !== 'ESCALATED') {
-      details.push({
-        field: 'status',
-        code: 'INVALID_ENUM',
-        message: 'status must be CANCELLED or ESCALATED for this endpoint',
-      });
-    }
+    return {
+      ok: false,
+      message: 'Request body must be a JSON object.',
+    };
   }
 
-  if (details.length > 0) {
+  const responderDeviceIdRaw = payload.responderDeviceId;
+  if (typeof responderDeviceIdRaw !== 'string' || !responderDeviceIdRaw.trim()) {
+    return {
+      ok: false,
+      message: 'responderDeviceId must be a non-empty string.',
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      responderDeviceId: responderDeviceIdRaw.trim(),
+    },
+  };
+}
+
+async function processAcceptAlertRequest(input: {
+  alertId: string;
+  payload: unknown;
+  requestId: string;
+  nowMs: () => number;
+  acceptAlert: NonNullable<CreateAlertsRouteDeps['acceptAlert']>;
+  onAlertAssigned?: CreateAlertsRouteDeps['onAlertAssigned'];
+}): Promise<AcceptAlertResult> {
+  const validation = validateAcceptAlertPayload(input.payload);
+  if (!validation.ok) {
     return {
       statusCode: 400,
       body: {
-        requestId,
+        requestId: input.requestId,
         error: {
           code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details,
+          message: validation.message,
         },
       },
     };
   }
 
   try {
-    const requestedStatus = (payload as { status: 'CANCELLED' | 'ESCALATED' }).status;
-    const updated = await updateAlertStatus(alertId, requestedStatus);
-    if (updated.kind === 'not_found') {
+    const result = await input.acceptAlert({
+      alertId: input.alertId,
+      responderDeviceId: validation.value.responderDeviceId,
+      assignedAt: input.nowMs(),
+    });
+
+    if (result.ok) {
+      if (input.onAlertAssigned) {
+        await input.onAlertAssigned(result.record);
+      }
+      return {
+        statusCode: 200,
+        body: {
+          requestId: input.requestId,
+          data: result.record,
+        },
+      };
+    }
+
+    if (result.code === 'ALERT_NOT_FOUND') {
       return {
         statusCode: 404,
         body: {
-          requestId,
+          requestId: input.requestId,
           error: {
             code: 'ALERT_NOT_FOUND',
-            message: 'Alert not found',
+            message: 'Alert not found.',
           },
         },
       };
     }
-    if (updated.kind === 'blocked') {
+
+    if (result.code === 'ALERT_ALREADY_ASSIGNED') {
       return {
-        statusCode: 400,
+        statusCode: 409,
         body: {
-          requestId,
+          requestId: input.requestId,
           error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Request validation failed',
-            details: [
-              {
-                field: 'status',
-                code: 'INVALID_VALUE',
-                message: `Cannot transition from ${updated.currentStatus} to ${requestedStatus}`,
-              },
-            ],
+            code: 'ALERT_ALREADY_ASSIGNED',
+            message: 'Alert has already been assigned.',
           },
         },
       };
     }
 
     return {
-      statusCode: 200,
+      statusCode: 409,
       body: {
-        requestId,
-        data: updated.data,
+        requestId: input.requestId,
+        error: {
+          code: 'ALERT_NOT_CLAIMABLE',
+          message: 'Alert cannot be claimed in its current state.',
+        },
       },
     };
   } catch {
     return {
       statusCode: 500,
       body: {
-        requestId,
+        requestId: input.requestId,
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to persist alert',
@@ -544,8 +570,21 @@ function resolveRequestId(response: Response): string {
   return fallbackId;
 }
 
-export function createAlertsRouter({ nowMs, createAlert, updateAlertStatus }: CreateAlertsRouteDeps): Router {
+export function createAlertsRouter({
+  nowMs,
+  createAlert,
+  acceptAlert,
+  onAlertCreated,
+  onAlertAssigned,
+}: CreateAlertsRouteDeps): Router {
   const router = Router();
+  const acceptAlertFn: NonNullable<CreateAlertsRouteDeps['acceptAlert']> =
+    acceptAlert ??
+    (async () => ({
+      ok: false,
+      code: 'ALERT_NOT_CLAIMABLE',
+      record: null,
+    }));
 
   const handler: RequestHandler = async (request, response) => {
     const requestId = resolveRequestId(response);
@@ -554,12 +593,29 @@ export function createAlertsRouter({ nowMs, createAlert, updateAlertStatus }: Cr
       requestId,
       nowMs,
       createAlert,
+      onAlertCreated,
+    });
+
+    response.status(result.statusCode).json(result.body);
+  };
+
+  const acceptHandler: RequestHandler = async (request, response) => {
+    const requestId = resolveRequestId(response);
+    const alertId = request.params.id;
+    const result = await processAcceptAlertRequest({
+      alertId,
+      payload: request.body,
+      requestId,
+      nowMs,
+      acceptAlert: acceptAlertFn,
+      onAlertAssigned,
     });
 
     response.status(result.statusCode).json(result.body);
   };
 
   router.post('/api/v1/alerts', handler);
+  router.post('/api/v1/alerts/:id/accept', acceptHandler);
 
   const updateStatusHandler: RequestHandler = async (request, response) => {
     const requestId = resolveRequestId(response);

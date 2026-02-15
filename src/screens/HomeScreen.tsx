@@ -185,6 +185,7 @@ export function HomeScreen() {
       offHazardRemoved();
       clearInterval(positionTimer);
       emergencyControllerService.stop();
+      riderHeartbeatService.stop();
     };
   }, [router]);
 
@@ -265,7 +266,10 @@ export function HomeScreen() {
   };
 
   return (
-    <Animated.View style={[styles.container, { opacity: contentFade }]}>
+    <Animated.ScrollView
+      style={[styles.container, { opacity: contentFade }]}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}>
       <View style={styles.topBar}>
         <Text style={styles.riderName}>{riderName}</Text>
         <Animated.View style={{ transform: [{ scale: sosPulse }] }}>
@@ -346,7 +350,7 @@ export function HomeScreen() {
           <Text style={styles.linkText}>Ride History</Text>
         </Pressable>
       </View>
-    </Animated.View>
+    </Animated.ScrollView>
   );
 }
 
@@ -362,9 +366,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#030712',
+  },
+  content: {
     paddingHorizontal: 14,
     paddingTop: 28,
-    paddingBottom: 52,
+    paddingBottom: 96,
     gap: 12,
   },
   topBar: {

@@ -2,9 +2,11 @@ import { ALERTS_API_URL, buildAlertStatusApiUrl } from '@/src/config/api';
 
 import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
+import { deviceIdentityService } from './deviceIdentityService';
 import { locationService, type LocationPoint } from './locationService';
 import { rideSessionService, type RideSession, type RideSessionState } from './rideSessionService';
 import { settingsService, type UserSettings } from './settingsService';
+import { socketService, type AlertAssignedEvent } from './socketService';
 import type { ServiceHealth } from './types';
 
 type EmergencyControllerLocationPayload = {
@@ -50,12 +52,20 @@ type CancelledEvent = {
   cancelledAt: number;
 };
 
+type ResponderAssignedEvent = {
+  type: 'RESPONDER_ASSIGNED';
+  alertId: string;
+  responderDeviceId: string;
+  assignedAt: number;
+};
+
 type EmergencyControllerEventMap = {
   PRE_DELAY_STARTED: PreDelayStartedEvent;
   COUNTDOWN_STARTED: CountdownStartedEvent;
   COUNTDOWN_TICK: CountdownTickEvent;
   ALERT_TRIGGERED: AlertTriggeredEvent;
   CANCELLED: CancelledEvent;
+  RESPONDER_ASSIGNED: ResponderAssignedEvent;
 };
 
 type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMap> = (
@@ -63,10 +73,6 @@ type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMa
 ) => void;
 
 const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
-const DEFAULT_DEVICE_ID = 'dextrex-mobile-client';
-const PRE_ALERT_DELAY_SECONDS = 10;
-const CRASH_COUNTDOWN_SECONDS = 30;
-const DETECTION_RESUME_DELAY_MS = 8000;
 
 class EmergencyControllerService {
   private state: EmergencyControllerState = 'NORMAL';
@@ -78,8 +84,7 @@ class EmergencyControllerService {
   private detectionResumeTimerTimeout: ReturnType<typeof setTimeout> | null = null;
   private crashUnsubscribe: (() => void) | null = null;
   private settingsUnsubscribe: (() => void) | null = null;
-  private rideStartedUnsubscribe: (() => void) | null = null;
-  private rideEndedUnsubscribe: (() => void) | null = null;
+  private socketAssignedUnsubscribe: (() => void) | null = null;
   private running = false;
   private crashDetectionRunning = false;
   private reentryLockedUntilMs = 0;
@@ -95,6 +100,7 @@ class EmergencyControllerService {
     COUNTDOWN_TICK: new Set(),
     ALERT_TRIGGERED: new Set(),
     CANCELLED: new Set(),
+    RESPONDER_ASSIGNED: new Set(),
   };
 
   async start(): Promise<void> {
@@ -102,7 +108,13 @@ class EmergencyControllerService {
       return;
     }
 
-    await rideSessionService.load();
+    this.deviceId = await deviceIdentityService.getDeviceId();
+    await socketService.start();
+    this.socketAssignedUnsubscribe = socketService.on('alert:assigned', (event) => {
+      this.handleAlertAssigned(event);
+    });
+
+    await crashDetectionService.start();
     const settings = settingsService.getSettings();
     if (settings.breadcrumbTrackingEnabled) {
       void locationService.startTracking().catch(() => {
@@ -139,19 +151,17 @@ class EmergencyControllerService {
     this.crashUnsubscribe = null;
     this.settingsUnsubscribe?.();
     this.settingsUnsubscribe = null;
-    this.rideStartedUnsubscribe?.();
-    this.rideStartedUnsubscribe = null;
-    this.rideEndedUnsubscribe?.();
-    this.rideEndedUnsubscribe = null;
+    this.socketAssignedUnsubscribe?.();
+    this.socketAssignedUnsubscribe = null;
     this.running = false;
     this.state = 'NORMAL';
     this.countdownRemainingSeconds = 0;
     this.countdownStartedAtMs = null;
     this.reentryLockedUntilMs = 0;
     this.activeAlertId = null;
-    this.createAlertInFlight = null;
-    this.statusUpdateInFlight = null;
+    crashDetectionService.stop();
     locationService.stopTracking();
+    socketService.stop();
   }
 
   on<TEvent extends keyof EmergencyControllerEventMap>(
@@ -395,34 +405,41 @@ class EmergencyControllerService {
     triggeredAt: number,
     immediateLocation: EmergencyControllerLocationPayload | null
   ): Promise<void> {
-    if (this.activeAlertId) {
+    const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
+    const deviceId = this.deviceId ?? (await deviceIdentityService.getDeviceId());
+    const payload = {
+      deviceId,
+      status: 'TRIGGERED' as const,
+      triggeredAt,
+      location: resolvedLocation,
+    };
+
+    const response = await this.sendAlertRequest(payload);
+    if (response?.id) {
+      this.activeAlertId = response.id;
+    }
+  }
+
+  private handleAlertAssigned(event: AlertAssignedEvent): void {
+    if (!this.running) {
       return;
     }
-    if (this.createAlertInFlight) {
-      await this.createAlertInFlight;
+
+    if (this.deviceId && event.victimDeviceId !== this.deviceId) {
       return;
     }
 
-    this.createAlertInFlight = (async () => {
-      const resolvedLocation = (await this.buildAlertLocationPayload()) ?? immediateLocation;
-      const payload = {
-        deviceId: DEFAULT_DEVICE_ID,
-        status: 'TRIGGERED' as const,
-        triggeredAt,
-        location: resolvedLocation,
-      };
-
-      const alertId = await this.sendCreateAlertRequest(payload);
-      if (alertId && this.state !== 'NORMAL' && this.state !== 'ALERT_CANCELLED') {
-        this.activeAlertId = alertId;
-      }
-    })();
-
-    try {
-      await this.createAlertInFlight;
-    } finally {
-      this.createAlertInFlight = null;
+    if (this.activeAlertId && event.alertId !== this.activeAlertId) {
+      return;
     }
+
+    this.state = 'RESPONDER_ASSIGNED';
+    this.emit('RESPONDER_ASSIGNED', {
+      type: 'RESPONDER_ASSIGNED',
+      alertId: event.alertId,
+      responderDeviceId: event.responderDeviceId,
+      assignedAt: event.assignedAt,
+    });
   }
 
   private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
@@ -452,7 +469,7 @@ class EmergencyControllerService {
       timestamp: number;
       breadcrumbTrail: LocationPoint[];
     } | null;
-  }): Promise<string | null> {
+  }): Promise<{ id: string } | null> {
     try {
       const response = await fetch(ALERTS_API_URL, {
         method: 'POST',
@@ -475,9 +492,15 @@ class EmergencyControllerService {
         return null;
       }
 
-      const alertId = typeof body?.data?.id === 'string' ? body.data.id : null;
-      console.log('[alerts] Alert sent successfully', { alertId, body });
-      return alertId;
+      console.log('[alerts] Alert sent successfully', body);
+      if (
+        body &&
+        typeof body === 'object' &&
+        typeof (body as { data?: { id?: unknown } }).data?.id === 'string'
+      ) {
+        return { id: (body as { data: { id: string } }).data.id };
+      }
+      return null;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error('[alerts] Network error while sending alert', {
@@ -678,4 +701,4 @@ class EmergencyControllerService {
 }
 
 export const emergencyControllerService = new EmergencyControllerService();
-export type { EmergencyControllerLocationPayload, EmergencyControllerState };
+export type { EmergencyControllerLocationPayload, EmergencyControllerState, ResponderAssignedEvent };

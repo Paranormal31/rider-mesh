@@ -21,8 +21,10 @@ export { emergencyControllerService } from './emergencyControllerService';
 export type { EmergencyContact } from './emergencyContactsService';
 export type {
   EmergencyControllerLocationPayload,
+  ResponderAssignedEvent,
   EmergencyControllerState,
 } from './emergencyControllerService';
+export { deviceIdentityService } from './deviceIdentityService';
 export { locationService } from './locationService';
 export { networkMeshService } from './networkMeshService';
 export type { NetworkMeshStatus } from './networkMeshService';
@@ -34,6 +36,8 @@ export type { SaveProfileInput, UserProfile } from './profileService';
 export { rideSessionService } from './rideSessionService';
 export type { RideSession, RideSessionState, RideSummary } from './rideSessionService';
 export { settingsService } from './settingsService';
+export { socketService } from './socketService';
+export type { AlertAssignedEvent, NearbyAlertEvent } from './socketService';
 export type {
   CountdownDurationSeconds,
   DetectionSensitivity,
