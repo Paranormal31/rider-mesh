@@ -1,8 +1,17 @@
+import { ALERTS_API_URL } from '@/src/config/api';
+
 import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
 import { locationService, type LocationPoint } from './locationService';
 import { settingsService, type UserSettings } from './settingsService';
 import type { ServiceHealth } from './types';
+
+type EmergencyControllerLocationPayload = {
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+  breadcrumbTrail: LocationPoint[];
+};
 
 type EmergencyControllerState =
   | 'MONITORING'
@@ -27,12 +36,7 @@ type AlertTriggeredEvent = {
   type: 'ALERT_TRIGGERED';
   triggeredAt: number;
   alarmSoundEnabled: boolean;
-  location: {
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null;
+  location: EmergencyControllerLocationPayload | null;
 };
 
 type CancelledEvent = {
@@ -52,6 +56,7 @@ type EmergencyControllerListener<TEvent extends keyof EmergencyControllerEventMa
 ) => void;
 
 const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
+const DEFAULT_DEVICE_ID = 'dextrex-mobile-client';
 
 class EmergencyControllerService {
   private state: EmergencyControllerState = 'MONITORING';
@@ -211,6 +216,16 @@ class EmergencyControllerService {
     const settings = settingsService.getSettings();
     this.state = 'ALERT_SENDING';
     const location = await this.buildAlertLocationPayload();
+
+    const payload = {
+      deviceId: DEFAULT_DEVICE_ID,
+      status: 'TRIGGERED' as const,
+      triggeredAt: now,
+      location,
+    };
+
+    await this.sendAlertRequest(payload);
+
     this.emit('ALERT_TRIGGERED', {
       type: 'ALERT_TRIGGERED',
       triggeredAt: now,
@@ -222,12 +237,7 @@ class EmergencyControllerService {
     alarmAudioService.stop();
   }
 
-  private async buildAlertLocationPayload(): Promise<{
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    breadcrumbTrail: LocationPoint[];
-  } | null> {
+  private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
     const includeBreadcrumbs = settingsService.getSettings().breadcrumbTrackingEnabled;
     const breadcrumbTrail = includeBreadcrumbs ? locationService.getBreadcrumbTrail(10) : [];
 
@@ -266,6 +276,47 @@ class EmergencyControllerService {
     locationService.stopTracking();
   }
 
+  private async sendAlertRequest(payload: {
+    deviceId: string;
+    status: 'TRIGGERED';
+    triggeredAt: number;
+    location: {
+      latitude: number;
+      longitude: number;
+      timestamp: number;
+      breadcrumbTrail: LocationPoint[];
+    } | null;
+  }): Promise<void> {
+    try {
+      const response = await fetch(ALERTS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = (await response.json().catch(() => null)) as unknown;
+
+      if (!response.ok) {
+        console.error('[alerts] Failed to send alert', {
+          url: ALERTS_API_URL,
+          status: response.status,
+          body,
+        });
+        return;
+      }
+
+      console.log('[alerts] Alert sent successfully', body);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error('[alerts] Network error while sending alert', {
+        url: ALERTS_API_URL,
+        reason,
+      });
+    }
+  }
+
   private clearCountdownTimer(): void {
     if (this.countdownTimer) {
       clearInterval(this.countdownTimer);
@@ -284,4 +335,4 @@ class EmergencyControllerService {
 }
 
 export const emergencyControllerService = new EmergencyControllerService();
-export type { EmergencyControllerState };
+export type { EmergencyControllerLocationPayload, EmergencyControllerState };
