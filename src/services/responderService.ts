@@ -73,17 +73,29 @@ class ResponderService {
       });
 
       if (response.ok) {
+        if (__DEV__) {
+          console.log('[responder] accept ok', { alertId });
+        }
         this.removeAlert(alertId);
         return { ok: true };
       }
 
       if (response.status === 409) {
+        if (__DEV__) {
+          console.log('[responder] accept conflict', { alertId });
+        }
         this.removeAlert(alertId);
         return { ok: false, reason: 'Alert already assigned.' };
       }
 
+      if (__DEV__) {
+        console.log('[responder] accept failed', { alertId, status: response.status });
+      }
       return { ok: false, reason: 'Accept request failed.' };
     } catch {
+      if (__DEV__) {
+        console.log('[responder] accept network error', { alertId });
+      }
       return { ok: false, reason: 'Network error while accepting alert.' };
     }
   }
@@ -94,6 +106,9 @@ class ResponderService {
       this.alerts.push(alert);
     } else {
       this.alerts[idx] = alert;
+    }
+    if (__DEV__) {
+      console.log('[responder] nearby alerts updated', { count: this.alerts.length });
     }
     this.emit('ALERTS_UPDATED', { alerts: this.getAlerts() });
   }

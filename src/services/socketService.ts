@@ -35,11 +35,17 @@ class SocketService {
     }
 
     this.socket = io(SOCKET_BASE_URL, {
-      transports: ['websocket'],
       autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      timeout: 8000,
     });
 
     this.socket.on('connect', () => {
+      if (__DEV__) {
+        console.log('[socket] connected');
+      }
       void this.registerDevice();
     });
 
@@ -54,6 +60,9 @@ class SocketService {
       return;
     }
 
+    if (__DEV__) {
+      console.log('[socket] disconnected');
+    }
     this.socket.disconnect();
     this.socket = null;
     this.started = false;
@@ -63,14 +72,17 @@ class SocketService {
     event: TEvent,
     listener: (payload: SocketEventMap[TEvent]) => void
   ): () => void {
-    this.socket?.on(event, listener);
+    this.socket?.on(event as string, listener as (...args: unknown[]) => void);
     return () => {
-      this.socket?.off(event, listener);
+      this.socket?.off(event as string, listener as (...args: unknown[]) => void);
     };
   }
 
   private async registerDevice(): Promise<void> {
     const deviceId = await deviceIdentityService.getDeviceId();
+    if (__DEV__) {
+      console.log('[socket] register_device', { deviceId });
+    }
     this.socket?.emit('register_device', { deviceId });
   }
 }

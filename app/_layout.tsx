@@ -1,12 +1,32 @@
+import { useEffect } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { AppState } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { appRuntimeService } from '@/src/services';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    void appRuntimeService.startForegroundRuntime();
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void appRuntimeService.startForegroundRuntime();
+      } else {
+        appRuntimeService.stopForegroundRuntime();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      appRuntimeService.stopForegroundRuntime();
+    };
+  }, []);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

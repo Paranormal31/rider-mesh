@@ -1,4 +1,5 @@
 export { alarmAudioService } from './alarmAudioService';
+export { appRuntimeService } from './appRuntimeService';
 export { crashDetectionService } from './crashDetectionService';
 export type {
   CrashDetectedEvent,
@@ -35,6 +36,9 @@ export { profileService } from './profileService';
 export type { SaveProfileInput, UserProfile } from './profileService';
 export { rideSessionService } from './rideSessionService';
 export type { RideSession, RideSessionState, RideSummary } from './rideSessionService';
+export { responderService } from './responderService';
+export type { ResponderAlert } from './responderService';
+export { riderHeartbeatService } from './riderHeartbeatService';
 export { settingsService } from './settingsService';
 export { socketService } from './socketService';
 export type { AlertAssignedEvent, NearbyAlertEvent } from './socketService';

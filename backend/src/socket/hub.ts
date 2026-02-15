@@ -16,7 +16,13 @@ export class SocketHub {
   init(server: HttpServer, corsOrigins: string[]): void {
     this.io = new Server(server, {
       cors: {
-        origin: corsOrigins,
+        origin(origin, callback) {
+          if (!origin || corsOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+          }
+          callback(new Error(`Origin not allowed by Socket.IO CORS: ${origin}`));
+        },
       },
     });
 
@@ -42,6 +48,12 @@ export class SocketHub {
     }
 
     for (const rider of nearby) {
+      console.log('[socket] emit alert:new_nearby', {
+        room: deviceRoom(rider.deviceId),
+        alertId: alert.id,
+        victimDeviceId: alert.deviceId,
+        distanceMeters: Math.round(rider.distanceMeters),
+      });
       this.io.to(deviceRoom(rider.deviceId)).emit('alert:new_nearby', {
         alertId: alert.id,
         victimDeviceId: alert.deviceId,
@@ -64,6 +76,13 @@ export class SocketHub {
       assignedAt: alert.assignedAt,
     };
 
+    console.log('[socket] emit alert:assigned', {
+      victimRoom: deviceRoom(alert.deviceId),
+      responderRoom: deviceRoom(alert.responderDeviceId),
+      alertId: alert.id,
+      victimDeviceId: alert.deviceId,
+      responderDeviceId: alert.responderDeviceId,
+    });
     this.io.to(deviceRoom(alert.deviceId)).emit('alert:assigned', payload);
     this.io.to(deviceRoom(alert.responderDeviceId)).emit('alert:assigned', payload);
   }

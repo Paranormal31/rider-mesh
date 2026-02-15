@@ -10,10 +10,12 @@ import {
   locationService,
   networkMeshService,
   profileService,
+  responderService,
   rideSessionService,
   settingsService,
   type HazardRecord,
   type NetworkMeshStatus,
+  type ResponderAlert,
   type RideSession,
 } from '@/src/services';
 
@@ -52,9 +54,12 @@ export function HomeScreen() {
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Position[]>([]);
   const [controllerState, setControllerState] = useState(emergencyControllerService.getState());
+  const [responderAlerts, setResponderAlerts] = useState<ResponderAlert[]>(responderService.getAlerts());
+  const [dismissedAlertId, setDismissedAlertId] = useState<string | null>(null);
+  const [responderFeedback, setResponderFeedback] = useState<string | null>(null);
+  const [isAcceptingAlert, setIsAcceptingAlert] = useState(false);
 
   const crashModalOpen = useRef(false);
-  const activeSosModalOpen = useRef(false);
   const contentFade = useRef(new Animated.Value(0)).current;
   const sosPulse = useRef(new Animated.Value(1)).current;
 
@@ -102,7 +107,6 @@ export function HomeScreen() {
       setControllerState('COUNTDOWN_ACTIVE');
       if (!crashModalOpen.current) {
         crashModalOpen.current = true;
-        activeSosModalOpen.current = false;
         router.push('/crash-alert');
       }
       setElapsedMs(rideSessionService.getElapsedMs() + event.remainingSeconds);
@@ -113,15 +117,10 @@ export function HomeScreen() {
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setControllerState('MONITORING');
       crashModalOpen.current = false;
-      activeSosModalOpen.current = false;
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
       setControllerState(emergencyControllerService.getState());
       crashModalOpen.current = false;
-      if (!activeSosModalOpen.current) {
-        activeSosModalOpen.current = true;
-        router.push('/active-sos');
-      }
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -145,6 +144,11 @@ export function HomeScreen() {
     });
     const offHazardRemoved = hazardService.on('HAZARD_REMOVED', ({ id }) => {
       setHazards((prev) => prev.filter((item) => item.id !== id));
+    });
+    const offResponder = responderService.on('ALERTS_UPDATED', ({ alerts }) => {
+      setResponderAlerts(alerts);
+      setDismissedAlertId(null);
+      setResponderFeedback(null);
     });
 
     const positionTimer = setInterval(() => {
@@ -177,9 +181,9 @@ export function HomeScreen() {
       offRideEndedWithSummary();
       offHazardAdded();
       offHazardRemoved();
+      offResponder();
       clearInterval(positionTimer);
       emergencyControllerService.stop();
-      riderHeartbeatService.stop();
     };
   }, [router]);
 
@@ -231,6 +235,21 @@ export function HomeScreen() {
     return 'offline' as const;
   }, [networkStatus]);
 
+  const topNearbyAlert = useMemo(() => {
+    const visible = responderAlerts.filter((alert) => alert.alertId !== dismissedAlertId);
+    if (visible.length === 0) {
+      return null;
+    }
+
+    return [...visible].sort((a, b) => {
+      const distanceDiff = a.distanceMeters - b.distanceMeters;
+      if (distanceDiff !== 0) {
+        return distanceDiff;
+      }
+      return b.triggeredAt - a.triggeredAt;
+    })[0];
+  }, [dismissedAlertId, responderAlerts]);
+
   const onToggleRide = () => {
     if (rideSession.state === 'ACTIVE') {
       void rideSessionService.endRide();
@@ -254,9 +273,18 @@ export function HomeScreen() {
   const onManualSos = async () => {
     const sent = await emergencyControllerService.triggerManualSos();
     if (sent) {
-      activeSosModalOpen.current = true;
-      router.push('/active-sos');
+      setControllerState(emergencyControllerService.getState());
     }
+  };
+
+  const onAcceptNearbyAlert = async (alertId: string) => {
+    setResponderFeedback(null);
+    setIsAcceptingAlert(true);
+    const result = await responderService.acceptAlert(alertId);
+    if (!result.ok) {
+      setResponderFeedback(result.reason ?? 'Unable to accept alert.');
+    }
+    setIsAcceptingAlert(false);
   };
 
   return (
@@ -270,6 +298,48 @@ export function HomeScreen() {
           <StatusBadge variant={networkVariant} />
         </Animated.View>
       </View>
+
+      {topNearbyAlert ? (
+        <View style={styles.nearbyAlertCard}>
+          <Text style={styles.nearbyAlertTitle}>Nearby SOS Alert</Text>
+          <Text style={styles.nearbyAlertMeta}>Victim: {shortDeviceId(topNearbyAlert.victimDeviceId)}</Text>
+          <Text style={styles.nearbyAlertMeta}>Distance: {Math.round(topNearbyAlert.distanceMeters)}m</Text>
+          <Text style={styles.nearbyAlertMeta}>
+            Triggered: {new Date(topNearbyAlert.triggeredAt).toLocaleTimeString()}
+          </Text>
+          <Text style={styles.nearbyAlertMeta}>
+            Location: {topNearbyAlert.location ? 'Available' : 'Unavailable'}
+          </Text>
+          {responderFeedback ? <Text style={styles.nearbyAlertFeedback}>{responderFeedback}</Text> : null}
+          <View style={styles.nearbyAlertActions}>
+            <Pressable
+              style={[styles.nearbyAlertAccept, isAcceptingAlert && styles.nearbyAlertDisabled]}
+              disabled={isAcceptingAlert}
+              onPress={() => {
+                void onAcceptNearbyAlert(topNearbyAlert.alertId);
+              }}>
+              <Text style={styles.nearbyAlertAcceptText}>
+                {isAcceptingAlert ? 'Accepting...' : 'Accept'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.nearbyAlertDismiss}
+              onPress={() => setDismissedAlertId(topNearbyAlert.alertId)}>
+              <Text style={styles.nearbyAlertDismissText}>Dismiss</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {controllerState === 'ALERT_SENDING' || controllerState === 'ALERT_SENT' ? (
+        <View style={styles.activeSosCard}>
+          <Text style={styles.activeSosTitle}>SOS Sent</Text>
+          <Text style={styles.activeSosMeta}>Emergency alert is active. You can cancel if you are safe.</Text>
+          <Pressable style={styles.activeSosCancelButton} onPress={() => emergencyControllerService.cancel()}>
+            <Text style={styles.activeSosCancelText}>Cancel SOS</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={styles.mapCard}>
         {mapModules.available && mapModules.MapView && mapModules.Marker ? (
@@ -354,6 +424,13 @@ function formatDuration(ms: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function shortDeviceId(value: string): string {
+  if (value.length <= 12) {
+    return value;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -373,6 +450,91 @@ const styles = StyleSheet.create({
   riderName: {
     color: '#FFFFFF',
     fontSize: 22,
+    fontWeight: '800',
+  },
+  nearbyAlertCard: {
+    backgroundColor: '#1F2937',
+    borderColor: '#EF4444',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  nearbyAlertTitle: {
+    color: '#FEE2E2',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  nearbyAlertMeta: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  nearbyAlertFeedback: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  nearbyAlertActions: {
+    marginTop: 6,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  nearbyAlertAccept: {
+    flex: 1,
+    backgroundColor: '#16A34A',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  nearbyAlertAcceptText: {
+    color: '#ECFDF5',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  nearbyAlertDismiss: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#6B7280',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  nearbyAlertDismissText: {
+    color: '#D1D5DB',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  nearbyAlertDisabled: {
+    opacity: 0.7,
+  },
+  activeSosCard: {
+    backgroundColor: '#7F1D1D',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  activeSosTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  activeSosMeta: {
+    color: '#FEE2E2',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  activeSosCancelButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  activeSosCancelText: {
+    color: '#7F1D1D',
+    fontSize: 13,
     fontWeight: '800',
   },
   mapCard: {

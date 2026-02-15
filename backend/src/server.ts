@@ -55,6 +55,16 @@ async function bootstrap(): Promise<void> {
         riders,
         radiusMeters: DISPATCH_RADIUS_METERS,
       });
+      console.log('[dispatch] nearby riders matched', {
+        alertId: alert.id,
+        victimDeviceId: alert.deviceId,
+        candidateRiders: riders.length,
+        matchedRiders: nearbyMatches.length,
+        matches: nearbyMatches.map((match) => ({
+          deviceId: match.deviceId,
+          distanceMeters: Math.round(match.distanceMeters),
+        })),
+      });
       socketHub.emitNearbyAlert(alert, nearbyMatches);
     },
     onAlertAssigned: (alert) => {

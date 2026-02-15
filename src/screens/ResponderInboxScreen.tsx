@@ -25,7 +25,6 @@ export function ResponderInboxScreen() {
     return () => {
       active = false;
       off();
-      responderService.stop();
     };
   }, []);
 

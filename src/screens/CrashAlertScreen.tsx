@@ -11,6 +11,7 @@ export function CrashAlertScreen() {
   );
   const [state, setState] = useState<EmergencyControllerState>(emergencyControllerService.getState());
   const [isSendingNow, setIsSendingNow] = useState(false);
+  const [sendNowError, setSendNowError] = useState<string | null>(null);
   const countdownScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -26,8 +27,9 @@ export function CrashAlertScreen() {
       setState('MONITORING');
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
+      setSendNowError(null);
       setState('ALERT_SENT');
-      router.replace('/active-sos');
+      router.replace('/(tabs)');
     });
 
     return () => {
@@ -50,7 +52,7 @@ export function CrashAlertScreen() {
 
   useEffect(() => {
     if (state === 'COUNTDOWN_ACTIVE' && remainingSeconds <= 0) {
-      router.replace('/active-sos');
+      router.replace('/(tabs)');
     }
   }, [remainingSeconds, router, state]);
 
@@ -76,13 +78,22 @@ export function CrashAlertScreen() {
       </Pressable>
       <Pressable
         style={[styles.sendNowButton, isSendingNow && styles.sendNowDisabled]}
-        onPress={() => {
+        onPress={async () => {
+          setSendNowError(null);
           setIsSendingNow(true);
-          emergencyControllerService.sendAlertNow().finally(() => setIsSendingNow(false));
+          const sent = await emergencyControllerService.sendAlertNow();
+          if (!sent) {
+            const forced = await emergencyControllerService.triggerManualSos();
+            if (!forced) {
+              setSendNowError('Unable to send now. Try again.');
+            }
+          }
+          setIsSendingNow(false);
         }}
         disabled={isSendingNow}>
         <Text style={styles.sendNowText}>{isSendingNow ? 'Sending...' : 'Send Now'}</Text>
       </Pressable>
+      {sendNowError ? <Text style={styles.errorText}>{sendNowError}</Text> : null}
     </View>
   );
 }
@@ -139,5 +150,10 @@ const styles = StyleSheet.create({
     color: '#FEE2E2',
     fontSize: 16,
     fontWeight: '800',
+  },
+  errorText: {
+    color: '#FEE2E2',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

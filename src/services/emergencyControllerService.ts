@@ -69,6 +69,8 @@ const DEFAULT_REENTRY_COOLDOWN_MS = 5000;
 
 class EmergencyControllerService {
   private state: EmergencyControllerState = 'MONITORING';
+  private deviceId: string | null = null;
+  private activeAlertId: string | null = null;
   private countdownRemainingSeconds = 0;
   private countdownStartedAtMs: number | null = null;
   private countdownDeadlineAtMs: number | null = null;
@@ -139,7 +141,6 @@ class EmergencyControllerService {
     this.activeAlertId = null;
     crashDetectionService.stop();
     locationService.stopTracking();
-    socketService.stop();
   }
 
   on<TEvent extends keyof EmergencyControllerEventMap>(
@@ -223,7 +224,21 @@ class EmergencyControllerService {
   }
 
   async sendAlertNow(): Promise<boolean> {
-    if (this.state !== 'COUNTDOWN_ACTIVE' && this.state !== 'CRASH_DETECTED') {
+    if (
+      this.state === 'ALERT_SENDING' ||
+      this.state === 'ALERT_SENT' ||
+      this.state === 'RESPONDER_ASSIGNED'
+    ) {
+      return false;
+    }
+
+    const countdownActive =
+      this.countdownTimer !== null ||
+      this.countdownRemainingSeconds > 0 ||
+      this.state === 'COUNTDOWN_ACTIVE' ||
+      this.state === 'CRASH_DETECTED';
+
+    if (!countdownActive) {
       return false;
     }
 
