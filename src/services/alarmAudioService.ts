@@ -1,7 +1,11 @@
-import { Audio, type AVPlaybackStatusSuccess } from 'expo-av';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+} from 'expo-audio';
 
 class AlarmAudioService {
-  private sound: Audio.Sound | null = null;
+  private player: AudioPlayer | null = null;
   private active = false;
   private loading = false;
 
@@ -30,31 +34,28 @@ class AlarmAudioService {
 
     this.loading = true;
     try {
-      if (!this.sound) {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          staysActiveInBackground: false,
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
+      if (!this.player) {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          shouldPlayInBackground: false,
+          playsInSilentMode: true,
+          interruptionMode: 'duckOthers',
+          shouldRouteThroughEarpiece: false,
         });
 
-        const { sound } = await Audio.Sound.createAsync(
-          require('./alarmAudioService.mp3'),
-          { isLooping: true, shouldPlay: false, volume: 1.0 }
-        );
-        this.sound = sound;
+        this.player = createAudioPlayer(require('./alarmAudioService.mp3'), {
+          keepAudioSessionActive: false,
+        });
+        this.player.loop = true;
+        this.player.volume = 1;
       }
 
-      if (!this.active || !this.sound) {
+      if (!this.active || !this.player) {
         return;
       }
 
-      const status = await this.sound.getStatusAsync();
-      if ((status as AVPlaybackStatusSuccess).isLoaded) {
-        await this.sound.setPositionAsync(0);
-        await this.sound.playAsync();
-      }
+      await this.player.seekTo(0);
+      this.player.play();
     } catch {
       this.active = false;
       await this.stopAndUnload();
@@ -64,25 +65,23 @@ class AlarmAudioService {
   }
 
   private async stopAndUnload(): Promise<void> {
-    if (!this.sound) {
+    if (!this.player) {
       return;
     }
 
     try {
-      const status = await this.sound.getStatusAsync();
-      if ((status as AVPlaybackStatusSuccess).isLoaded) {
-        await this.sound.stopAsync();
-      }
+      this.player.pause();
+      await this.player.seekTo(0);
     } catch {
       // Ignore playback-stop errors; emergency flow should continue.
     }
 
     try {
-      await this.sound.unloadAsync();
+      this.player.remove();
     } catch {
-      // Ignore unload errors.
+      // Ignore cleanup errors.
     } finally {
-      this.sound = null;
+      this.player = null;
     }
   }
 }
