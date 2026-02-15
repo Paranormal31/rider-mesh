@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { type RequestHandler, type Response, Router } from 'express';
+import { isValidObjectId } from 'mongoose';
 
 import type {
   AcceptAlertFailureCode,
@@ -11,6 +12,7 @@ import type {
   CreateAlertPersistenceInput,
   CreateAlertSuccessResponse,
   InternalErrorResponse,
+  UpdateAlertStatusResponse,
   ValidationErrorResponse,
   ValidationIssue,
   ValidationIssueCode,
@@ -55,6 +57,21 @@ interface ProcessCreateAlertDeps {
   onAlertCreated?: (alert: AlertRecord) => void | Promise<void>;
   payload: unknown;
   requestId: string;
+  nowMs: CreateAlertsRouteDeps['nowMs'];
+  createAlert: CreateAlertsRouteDeps['createAlert'];
+}
+
+type UpdateAlertStatusResult =
+  | { statusCode: 200; body: UpdateAlertStatusResponse }
+  | { statusCode: 400; body: ValidationErrorResponse }
+  | { statusCode: 404; body: AlertNotFoundResponse }
+  | { statusCode: 500; body: InternalErrorResponse };
+
+interface ProcessUpdateAlertStatusDeps {
+  alertId: string;
+  payload: unknown;
+  requestId: string;
+  updateAlertStatus: CreateAlertsRouteDeps['updateAlertStatus'];
 }
 
 type AcceptAlertResult =
@@ -599,6 +616,20 @@ export function createAlertsRouter({
 
   router.post('/api/v1/alerts', handler);
   router.post('/api/v1/alerts/:id/accept', acceptHandler);
+
+  const updateStatusHandler: RequestHandler = async (request, response) => {
+    const requestId = resolveRequestId(response);
+    const result = await processUpdateAlertStatusRequest({
+      alertId: request.params.id,
+      payload: request.body,
+      requestId,
+      updateAlertStatus,
+    });
+
+    response.status(result.statusCode).json(result.body);
+  };
+
+  router.patch('/api/v1/alerts/:id', updateStatusHandler);
 
   return router;
 }

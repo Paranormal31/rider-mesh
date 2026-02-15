@@ -77,6 +77,11 @@ type AlertDocument = InferSchemaType<typeof alertSchema> & {
   status: AlertStatus;
 };
 
+export type AlertStatusTransitionResult =
+  | { kind: 'updated'; data: Pick<AlertRecord, 'id' | 'status' | 'updatedAt'> }
+  | { kind: 'not_found' }
+  | { kind: 'blocked'; currentStatus: AlertStatus };
+
 const AlertModel =
   (mongoose.models.Alert as mongoose.Model<AlertDocument> | undefined) ??
   mongoose.model<AlertDocument>('Alert', alertSchema);

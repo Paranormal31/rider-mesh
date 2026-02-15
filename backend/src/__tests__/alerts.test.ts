@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAlertsRouter, processCreateAlertRequest } from '../routes/alerts';
+import {
+  createAlertsRouter,
+  processCreateAlertRequest,
+  processUpdateAlertStatusRequest,
+} from '../routes/alerts';
 import type { AlertLocation, AlertRecord, CreateAlertPersistenceInput } from '../types/alert';
 
 const FIXED_NOW_MS = 1_739_555_556_000;
@@ -41,6 +45,17 @@ function buildAlertRecord(input: CreateAlertPersistenceInput): AlertRecord {
     location: input.location,
     createdAt: FIXED_NOW_MS,
     updatedAt: FIXED_NOW_MS,
+  };
+}
+
+function buildUpdateResult(id: string, status: 'CANCELLED' | 'ESCALATED' = 'CANCELLED') {
+  return {
+    kind: 'updated' as const,
+    data: {
+      id,
+      status,
+      updatedAt: FIXED_NOW_MS,
+    },
   };
 }
 
@@ -353,10 +368,229 @@ describe('alerts contract', () => {
     expect(serverError.body.requestId).toBe('req-server-error-id');
   });
 
+  it('200 when status update payload is valid and alert exists', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'CANCELLED' },
+      requestId: 'req-update-success',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(200);
+    if (result.statusCode !== 200) {
+      throw new Error('Expected 200 response');
+    }
+
+    expect(result.body.requestId).toBe('req-update-success');
+    expect(result.body.data).toEqual(buildUpdateResult('67b07e7f6d4a9b7a8b9957d1').data);
+    expect(updateAlertStatus).toHaveBeenCalledWith('67b07e7f6d4a9b7a8b9957d1', 'CANCELLED');
+  });
+
+  it('200 when status update payload escalates alert', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id, 'ESCALATED'));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'ESCALATED' },
+      requestId: 'req-update-escalated',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(200);
+    if (result.statusCode !== 200) {
+      throw new Error('Expected 200 response');
+    }
+
+    expect(result.body.data.status).toBe('ESCALATED');
+    expect(updateAlertStatus).toHaveBeenCalledWith('67b07e7f6d4a9b7a8b9957d1', 'ESCALATED');
+  });
+
+  it('400 when status update payload has unknown fields', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'CANCELLED', extra: true },
+      requestId: 'req-update-unknown-field',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'extra', code: 'UNKNOWN_FIELD' }),
+      ])
+    );
+    expect(updateAlertStatus).not.toHaveBeenCalled();
+  });
+
+  it('400 when status update payload is missing status', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: {},
+      requestId: 'req-update-missing-status',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'status', code: 'REQUIRED_FIELD' }),
+      ])
+    );
+  });
+
+  it('400 when status update payload has unsupported status', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'DISPATCHED' },
+      requestId: 'req-update-invalid-status',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'status', code: 'INVALID_ENUM' }),
+      ])
+    );
+  });
+
+  it('400 when status update alert id is invalid', async () => {
+    const updateAlertStatus = vi.fn(async (id: string) => buildUpdateResult(id));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: 'not-an-object-id',
+      payload: { status: 'CANCELLED' },
+      requestId: 'req-update-invalid-id',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'id', code: 'INVALID_VALUE' }),
+      ])
+    );
+  });
+
+  it('404 when status update alert does not exist', async () => {
+    const updateAlertStatus = vi.fn(async () => ({ kind: 'not_found' as const }));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'CANCELLED' },
+      requestId: 'req-update-not-found',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(404);
+    if (result.statusCode !== 404) {
+      throw new Error('Expected 404 response');
+    }
+
+    expect(result.body.error.code).toBe('ALERT_NOT_FOUND');
+  });
+
+  it('500 when status update persistence throws unexpectedly', async () => {
+    const updateAlertStatus = vi.fn(async () => {
+      throw new Error('db failure');
+    });
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'CANCELLED' },
+      requestId: 'req-update-server-error',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(500);
+    if (result.statusCode !== 500) {
+      throw new Error('Expected 500 response');
+    }
+
+    expect(result.body.error.code).toBe('INTERNAL_ERROR');
+  });
+
+  it('400 when status transition is blocked by current state', async () => {
+    const updateAlertStatus = vi.fn(async () => ({ kind: 'blocked' as const, currentStatus: 'CANCELLED' as const }));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'ESCALATED' },
+      requestId: 'req-update-blocked',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'status',
+          code: 'INVALID_VALUE',
+          message: 'Cannot transition from CANCELLED to ESCALATED',
+        }),
+      ])
+    );
+  });
+
+  it('400 when status transition is blocked from ESCALATED to CANCELLED', async () => {
+    const updateAlertStatus = vi.fn(async () => ({ kind: 'blocked' as const, currentStatus: 'ESCALATED' as const }));
+
+    const result = await processUpdateAlertStatusRequest({
+      alertId: '67b07e7f6d4a9b7a8b9957d1',
+      payload: { status: 'CANCELLED' },
+      requestId: 'req-update-blocked-escalated',
+      updateAlertStatus,
+    });
+
+    expect(result.statusCode).toBe(400);
+    if (result.statusCode !== 400) {
+      throw new Error('Expected 400 response');
+    }
+
+    expect(result.body.error.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'status',
+          code: 'INVALID_VALUE',
+          message: 'Cannot transition from ESCALATED to CANCELLED',
+        }),
+      ])
+    );
+  });
+
   it('registers POST /api/v1/alerts route', () => {
     const router = createAlertsRouter({
       nowMs: () => FIXED_NOW_MS,
       createAlert: async (input: CreateAlertPersistenceInput) => buildAlertRecord(input),
+      updateAlertStatus: async (id: string) => buildUpdateResult(id),
     });
 
     const routes = (
@@ -372,6 +606,10 @@ describe('alerts contract', () => {
         expect.objectContaining({
           path: '/api/v1/alerts',
           methods: expect.objectContaining({ post: true }),
+        }),
+        expect.objectContaining({
+          path: '/api/v1/alerts/:id',
+          methods: expect.objectContaining({ patch: true }),
         }),
       ])
     );
