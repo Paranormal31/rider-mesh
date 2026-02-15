@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const SETTINGS_STORAGE_KEY = '@dextrix/user-settings/v1';
 
 type DetectionSensitivity = 'LOW' | 'MEDIUM' | 'HIGH';
-type CountdownDurationSeconds = 5 | 10 | 15;
+type CountdownDurationSeconds = 3 | 5 | 10;
 
 type UserSettings = {
   sensitivity: DetectionSensitivity;
@@ -157,7 +157,7 @@ function isSensitivity(value: unknown): value is DetectionSensitivity {
 }
 
 function isCountdownDuration(value: unknown): value is CountdownDurationSeconds {
-  return value === 5 || value === 10 || value === 15;
+  return value === 3 || value === 5 || value === 10;
 }
 
 export const settingsService = new SettingsService();

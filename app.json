@@ -20,7 +20,8 @@
       },
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.ridermesh"
     },
     "web": {
       "output": "static",
@@ -47,4 +48,3 @@
     }
   }
 }
-

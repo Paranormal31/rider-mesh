@@ -10,7 +10,7 @@ import {
 } from '@/src/services';
 
 const SENSITIVITY_OPTIONS: DetectionSensitivity[] = ['LOW', 'MEDIUM', 'HIGH'];
-const COUNTDOWN_OPTIONS: CountdownDurationSeconds[] = [5, 10, 15];
+const COUNTDOWN_OPTIONS: CountdownDurationSeconds[] = [3, 5, 10];
 
 export function SettingsScreen() {
   const router = useRouter();
