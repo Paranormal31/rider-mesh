@@ -15,8 +15,7 @@ export default function PermissionsRoute() {
   const onGrantPermissions = async () => {
     setIsSubmitting(true);
     try {
-      const next = await permissionsService.requestAllBestEffort();
-      setSnapshot(next);
+      await permissionsService.requestAllBestEffort();
     } finally {
       setIsSubmitting(false);
       router.push('/(onboarding)/profile-setup');

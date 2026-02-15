@@ -41,9 +41,7 @@ export function ActiveSosScreen() {
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
       setState('MONITORING');
-      if (router.canGoBack()) {
-        router.back();
-      }
+      router.replace('/(tabs)');
     });
     const offNetwork = networkMeshService.on('STATUS_CHANGED', ({ status }) => {
       setNetworkStatus(status);
@@ -77,9 +75,7 @@ export function ActiveSosScreen() {
       state !== 'CRASH_DETECTED' &&
       state !== 'COUNTDOWN_ACTIVE'
     ) {
-      if (router.canGoBack()) {
-        router.back();
-      }
+      router.replace('/(tabs)');
     }
   }, [router, state]);
 
