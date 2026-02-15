@@ -1,6 +1,5 @@
 import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
 import { Alert, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusBadge } from '@/src/components/ui';
@@ -33,18 +32,7 @@ type MapModules = {
 };
 
 function loadMapModules(): MapModules {
-  // Expo Go may not include react-native-maps native module in this build.
-  if (Constants.appOwnership === 'expo') {
-    return { available: false };
-  }
-
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { NativeModules } = require('react-native');
-    if (!NativeModules?.RNMapsAirModule && !NativeModules?.AirMapModule) {
-      return { available: false };
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const maps = require('react-native-maps');
     return {
@@ -262,6 +250,8 @@ export function HomeScreen() {
   const MapViewComponent = mapModules.MapView;
   const MarkerComponent = mapModules.Marker;
   const PolylineComponent = mapModules.Polyline;
+  const HeatmapComponent = mapModules.Heatmap;
+  const CircleComponent = mapModules.Circle;
 
   const fatigueLevel = useMemo(() => {
     const mins = Math.floor(elapsedMs / 60000);
@@ -402,31 +392,11 @@ export function HomeScreen() {
   };
 
   const onManualSos = async () => {
-    Alert.alert(
-      'Send SOS?',
-      'This will start the emergency countdown and notify your contacts if not canceled.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'destructive',
-          onPress: async () => {
-            await emergencyControllerService.start();
-            const sent = await emergencyControllerService.triggerManualSos();
-            if (sent) {
-              crashModalOpen.current = true;
-              activeSosModalOpen.current = false;
-              router.push('/crash-alert');
-            } else {
-              Alert.alert('SOS unavailable', 'An SOS is already active or initializing. Please try again.');
-            }
-          },
-        },
-      ]
-    );
     const sent = await emergencyControllerService.triggerManualSos();
     if (sent) {
       setControllerState(emergencyControllerService.getState());
+    } else {
+      Alert.alert('SOS unavailable', 'An SOS is already active or initializing. Please try again.');
     }
   };
 
@@ -517,12 +487,12 @@ export function HomeScreen() {
       ) : null}
 
       <View style={styles.mapCard}>
-        {mapModules.available && mapModules.MapView && mapModules.Marker ? (
-          <mapModules.MapView style={styles.map} initialRegion={mapRegion} region={mapRegion}>
-            {mapModules.Heatmap && Platform.OS === 'android'
+        {mapModules.available && MapViewComponent && MarkerComponent ? (
+          <MapViewComponent style={styles.map} initialRegion={mapRegion} region={mapRegion}>
+            {HeatmapComponent && Platform.OS === 'android'
               ? (Object.keys(heatmapByType) as HazardType[]).map((type) =>
                   heatmapByType[type].length > 0 ? (
-                    <mapModules.Heatmap
+                    <HeatmapComponent
                       key={`heatmap-${type}`}
                       points={heatmapByType[type]}
                       radius={30}
@@ -532,9 +502,9 @@ export function HomeScreen() {
                   ) : null
                 )
               : null}
-            {mapModules.Circle && Platform.OS === 'android'
+            {CircleComponent && Platform.OS === 'android'
               ? redZones.map((zone, index) => (
-                  <mapModules.Circle
+                  <CircleComponent
                     key={`red-zone-${index}`}
                     center={zone}
                     radius={200}
@@ -543,9 +513,6 @@ export function HomeScreen() {
                   />
                 ))
               : null}
-            {currentPosition ? <mapModules.Marker coordinate={currentPosition} title="You" /> : null}
-        {mapModules.available && MapViewComponent && MarkerComponent ? (
-          <MapViewComponent style={styles.map} initialRegion={mapRegion} region={mapRegion}>
             {currentPosition ? <MarkerComponent coordinate={currentPosition} title="You" /> : null}
             {hazards.map((hazard) => (
               <MarkerComponent
@@ -638,6 +605,8 @@ function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number):
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadius * c;
+}
+
 function shortDeviceId(value: string): string {
   if (value.length <= 12) {
     return value;

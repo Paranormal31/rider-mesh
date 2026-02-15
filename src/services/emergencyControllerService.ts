@@ -318,20 +318,9 @@ class EmergencyControllerService {
     if (!this.running) {
       return false;
     }
-    const nowMs = Date.now();
-    if (nowMs < this.reentryLockedUntilMs) {
+    if (Date.now() < this.reentryLockedUntilMs) {
       return false;
     }
-    if (this.state !== 'MONITORING') {
-      return false;
-    }
-
-    const settings = settingsService.getSettings();
-    this.state = 'CRASH_DETECTED';
-    if (settings.alarmSoundEnabled) {
-      alarmAudioService.start();
-    }
-    this.startCountdown(3);
     if (this.isAlertFlowActive() || this.state === 'ALERT_ESCALATED') {
       return false;
     }

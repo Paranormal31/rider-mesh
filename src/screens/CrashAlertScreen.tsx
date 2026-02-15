@@ -33,8 +33,6 @@ export function CrashAlertScreen() {
       router.replace('/(tabs)');
     });
     const offCancelled = emergencyControllerService.on('CANCELLED', () => {
-      setState('MONITORING');
-      closeScreen();
       setState('ALERT_CANCELLED');
     });
     const offAlert = emergencyControllerService.on('ALERT_TRIGGERED', () => {
@@ -52,14 +50,8 @@ export function CrashAlertScreen() {
   }, [closeScreen, router]);
 
   useEffect(() => {
-    if (state !== 'COUNTDOWN_ACTIVE' && state !== 'CRASH_DETECTED') {
-      closeScreen();
     if (state === 'NORMAL' || state === 'ALERT_CANCELLED') {
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace('/(tabs)');
-      }
+      closeScreen();
     }
   }, [closeScreen, state]);
 

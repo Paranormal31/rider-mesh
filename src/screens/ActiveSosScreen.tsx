@@ -75,19 +75,12 @@ export function ActiveSosScreen() {
 
   useEffect(() => {
     if (
-      state !== 'ALERT_SENDING' &&
-      state !== 'ALERT_SENT' &&
-      state !== 'RESPONDER_ASSIGNED' &&
-      state !== 'CRASH_DETECTED' &&
-      state !== 'COUNTDOWN_ACTIVE'
+      state !== 'SOS_DISPATCHED' &&
+      state !== 'ESCALATION_COUNTDOWN' &&
+      state !== 'ALERT_ESCALATED' &&
+      state !== 'RESPONDER_ASSIGNED'
     ) {
       closeScreen();
-    if (state === 'NORMAL' || state === 'ALERT_CANCELLED') {
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace('/(tabs)');
-      }
     }
   }, [closeScreen, state]);
 
