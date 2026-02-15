@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const CONTACTS_STORAGE_KEY = '@dextrix/emergency-contacts/v1';
 const MAX_CONTACTS = 3;
 const REQUIRED_PHONE_DIGITS = 10;
+const MAX_NAME_LENGTH = 50;
 
 type EmergencyContact = {
   id: string;
@@ -16,8 +17,20 @@ type AddContactInput = {
   phone: string;
 };
 
-type ContactValidationError = 'EMPTY_NAME' | 'EMPTY_PHONE' | 'INVALID_PHONE' | 'DUPLICATE_PHONE';
+type UpdateContactInput = {
+  id: string;
+  name: string;
+  phone: string;
+};
+
+type ContactValidationError =
+  | 'EMPTY_NAME'
+  | 'EMPTY_PHONE'
+  | 'INVALID_PHONE'
+  | 'DUPLICATE_PHONE'
+  | 'NAME_TOO_LONG';
 type AddContactError = ContactValidationError | 'MAX_LIMIT';
+type UpdateContactError = ContactValidationError | 'NOT_FOUND';
 
 type ContactValidationResult =
   | { ok: true; normalizedPhone: string }
@@ -26,6 +39,10 @@ type ContactValidationResult =
 type AddContactResult =
   | { ok: true; contacts: EmergencyContact[] }
   | { ok: false; error: AddContactError };
+
+type UpdateContactResult =
+  | { ok: true; contacts: EmergencyContact[] }
+  | { ok: false; error: UpdateContactError };
 
 class EmergencyContactsService {
   async loadContacts(): Promise<EmergencyContact[]> {
@@ -78,6 +95,33 @@ class EmergencyContactsService {
     return { ok: true, contacts: this.sortContacts([nextContact, ...existing]) };
   }
 
+  updateContact(input: UpdateContactInput, existing: EmergencyContact[]): UpdateContactResult {
+    const existingContact = existing.find((contact) => contact.id === input.id);
+    if (!existingContact) {
+      return { ok: false, error: 'NOT_FOUND' };
+    }
+
+    const validation = this.validateContactInput(input.name, input.phone);
+    if (!validation.ok) {
+      return validation;
+    }
+
+    const duplicateExists = existing.some(
+      (contact) => contact.id !== input.id && contact.phone === validation.normalizedPhone
+    );
+    if (duplicateExists) {
+      return { ok: false, error: 'DUPLICATE_PHONE' };
+    }
+
+    const nextContacts = existing.map((contact) =>
+      contact.id === input.id
+        ? { ...contact, name: input.name.trim(), phone: validation.normalizedPhone }
+        : contact
+    );
+
+    return { ok: true, contacts: this.sortContacts(nextContacts) };
+  }
+
   deleteContact(id: string, existing: EmergencyContact[]): EmergencyContact[] {
     return this.sortContacts(existing.filter((contact) => contact.id !== id));
   }
@@ -86,6 +130,9 @@ class EmergencyContactsService {
     const trimmedName = name.trim();
     if (!trimmedName) {
       return { ok: false, error: 'EMPTY_NAME' };
+    }
+    if (trimmedName.length > MAX_NAME_LENGTH) {
+      return { ok: false, error: 'NAME_TOO_LONG' };
     }
 
     const trimmedPhone = phone.trim();
@@ -135,4 +182,8 @@ export type {
   ContactValidationError,
   ContactValidationResult,
   EmergencyContact,
+  UpdateContactError,
+  UpdateContactInput,
+  UpdateContactResult,
 };
+export { MAX_NAME_LENGTH as EMERGENCY_CONTACT_MAX_NAME_LENGTH };
