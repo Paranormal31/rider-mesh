@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { onboardingService } from '@/src/services';
+import { onboardingService, profileService } from '@/src/services';
 import { colors } from '@/src/theme';
 
 export default function IndexRoute() {
@@ -13,11 +13,15 @@ export default function IndexRoute() {
     let active = true;
 
     const runGate = async () => {
-      const complete = await onboardingService.isComplete();
+      const [complete, profile] = await Promise.all([
+        onboardingService.isComplete(),
+        profileService.getProfile(),
+      ]);
+      const profileComplete = profileService.isProfileComplete(profile);
       if (!active) {
         return;
       }
-      if (complete) {
+      if (complete && profileComplete) {
         router.replace('/(tabs)');
       } else {
         router.replace('/(onboarding)/splash');

@@ -1,5 +1,5 @@
 import { SosReceivedScreen } from '@/src/screens/SosReceivedScreen';
 
-export default function CommunityRoute() {
+export default function SosReceivedRoute() {
   return <SosReceivedScreen />;
 }

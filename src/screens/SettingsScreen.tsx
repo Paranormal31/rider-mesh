@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import {
@@ -12,6 +13,7 @@ const SENSITIVITY_OPTIONS: DetectionSensitivity[] = ['LOW', 'MEDIUM', 'HIGH'];
 const COUNTDOWN_OPTIONS: CountdownDurationSeconds[] = [5, 10, 15];
 
 export function SettingsScreen() {
+  const router = useRouter();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -84,11 +86,14 @@ export function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Detection Settings</Text>
-      <Text style={styles.subtitle}>Customize crash detection behavior.</Text>
+      <Text style={styles.title}>Settings</Text>
+      <Text style={styles.subtitle}>RiderShield controls and safety preferences.</Text>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Sensitivity</Text>
+        <Text style={styles.sectionTitle}>Safety & Alerts</Text>
+        <Text style={styles.sectionHint}>Detection and emergency behavior</Text>
+
+        <Text style={styles.fieldTitle}>Sensitivity</Text>
         <View style={styles.optionRow}>
           {SENSITIVITY_OPTIONS.map((option) => {
             const selected = settings.sensitivity === option;
@@ -108,7 +113,7 @@ export function SettingsScreen() {
           })}
         </View>
 
-        <Text style={styles.sectionTitle}>Countdown Duration</Text>
+        <Text style={styles.fieldTitle}>Countdown Duration</Text>
         <View style={styles.optionRow}>
           {COUNTDOWN_OPTIONS.map((seconds) => {
             const selected = settings.countdownDurationSeconds === seconds;
@@ -130,9 +135,9 @@ export function SettingsScreen() {
       </View>
 
       <View style={styles.card}>
+        <Text style={styles.fieldTitle}>Alarm Sound</Text>
         <View style={styles.toggleRow}>
           <View style={styles.toggleMeta}>
-            <Text style={styles.toggleTitle}>Alarm Sound</Text>
             <Text style={styles.toggleDescription}>Play spoken alarm during crash flow.</Text>
           </View>
           <Switch
@@ -144,9 +149,9 @@ export function SettingsScreen() {
           />
         </View>
 
+        <Text style={styles.fieldTitle}>Breadcrumb Tracking</Text>
         <View style={styles.toggleRow}>
           <View style={styles.toggleMeta}>
-            <Text style={styles.toggleTitle}>Breadcrumb Tracking</Text>
             <Text style={styles.toggleDescription}>Collect route trail for emergency payloads.</Text>
           </View>
           <Switch
@@ -156,6 +161,35 @@ export function SettingsScreen() {
               void onChange({ breadcrumbTrackingEnabled: value });
             }}
           />
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Emergency Contacts</Text>
+        <Text style={styles.sectionHint}>Manage your trusted emergency numbers</Text>
+        <Pressable style={styles.linkButton} onPress={() => router.push('/emergency-contacts')}>
+          <Text style={styles.linkButtonText}>Open Emergency Contacts</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>App Controls</Text>
+        <Text style={styles.sectionHint}>Additional controls are available in upcoming blocks.</Text>
+        <View style={styles.placeholderRow}>
+          <Text style={styles.placeholderLabel}>Mesh Range Settings</Text>
+          <Text style={styles.comingSoon}>Coming soon</Text>
+        </View>
+        <View style={styles.placeholderRow}>
+          <Text style={styles.placeholderLabel}>Data Privacy Settings</Text>
+          <Text style={styles.comingSoon}>Coming soon</Text>
+        </View>
+        <View style={styles.placeholderRow}>
+          <Text style={styles.placeholderLabel}>Help & Support</Text>
+          <Text style={styles.comingSoon}>Coming soon</Text>
+        </View>
+        <View style={styles.placeholderRow}>
+          <Text style={styles.placeholderLabel}>Logout</Text>
+          <Text style={styles.comingSoon}>Coming soon</Text>
         </View>
       </View>
 
@@ -208,6 +242,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  sectionHint: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    marginTop: -4,
+  },
+  fieldTitle: {
+    color: '#E5E7EB',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   optionRow: {
     flexDirection: 'row',
     gap: 10,
@@ -241,12 +285,7 @@ const styles = StyleSheet.create({
   },
   toggleMeta: {
     flex: 1,
-    gap: 4,
-  },
-  toggleTitle: {
-    color: '#F9FAFB',
-    fontSize: 15,
-    fontWeight: '700',
+    gap: 2,
   },
   toggleDescription: {
     color: '#9CA3AF',
@@ -260,5 +299,37 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#FCA5A5',
     fontSize: 13,
+  },
+  linkButton: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  linkButtonText: {
+    color: '#E5E7EB',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  placeholderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1F2937',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  placeholderLabel: {
+    color: '#D1D5DB',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  comingSoon: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

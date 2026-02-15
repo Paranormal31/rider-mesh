@@ -1,13 +1,10 @@
-import {
-  createAudioPlayer,
-  setAudioModeAsync,
-  type AudioPlayer,
-} from 'expo-audio';
+import * as Speech from 'expo-speech';
+
+const ALERT_MESSAGE = 'Emergency alert. Crash detected.';
 
 class AlarmAudioService {
-  private player: AudioPlayer | null = null;
   private active = false;
-  private loading = false;
+  private speaking = false;
 
   start(): void {
     if (this.active) {
@@ -15,73 +12,48 @@ class AlarmAudioService {
     }
 
     this.active = true;
-    void this.playLoop();
+    this.speakNext();
   }
 
   stop(): void {
     this.active = false;
-    void this.stopAndUnload();
+    this.speaking = false;
+    try {
+      Speech.stop();
+    } catch {
+      // Keep emergency flow resilient even when audio stop fails.
+    }
   }
 
   isPlaying(): boolean {
     return this.active;
   }
 
-  private async playLoop(): Promise<void> {
-    if (!this.active || this.loading) {
+  private speakNext(): void {
+    if (!this.active || this.speaking) {
       return;
     }
 
-    this.loading = true;
+    this.speaking = true;
     try {
-      if (!this.player) {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          shouldPlayInBackground: false,
-          playsInSilentMode: true,
-          interruptionMode: 'duckOthers',
-          shouldRouteThroughEarpiece: false,
-        });
-
-        this.player = createAudioPlayer(require('./alarmAudioService.mp3'), {
-          keepAudioSessionActive: false,
-        });
-        this.player.loop = true;
-        this.player.volume = 1;
-      }
-
-      if (!this.active || !this.player) {
-        return;
-      }
-
-      await this.player.seekTo(0);
-      this.player.play();
+      Speech.speak(ALERT_MESSAGE, {
+        rate: 0.9,
+        pitch: 1.0,
+        onDone: () => {
+          this.speaking = false;
+          if (this.active) {
+            this.speakNext();
+          }
+        },
+        onStopped: () => {
+          this.speaking = false;
+        },
+        onError: () => {
+          this.speaking = false;
+        },
+      });
     } catch {
-      this.active = false;
-      await this.stopAndUnload();
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  private async stopAndUnload(): Promise<void> {
-    if (!this.player) {
-      return;
-    }
-
-    try {
-      this.player.pause();
-      await this.player.seekTo(0);
-    } catch {
-      // Ignore playback-stop errors; emergency flow should continue.
-    }
-
-    try {
-      this.player.remove();
-    } catch {
-      // Ignore cleanup errors.
-    } finally {
-      this.player = null;
+      this.speaking = false;
     }
   }
 }
