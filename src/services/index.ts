@@ -41,10 +41,25 @@ export type { ResponderAlert } from './responderService';
 export { riderHeartbeatService } from './riderHeartbeatService';
 export { settingsService } from './settingsService';
 export { socketService } from './socketService';
-export type { AlertAssignedEvent, AlertCancelledEvent, NearbyAlertEvent } from './socketService';
+export type { AlertAssignedEvent, AlertCancelledEvent, NearbyAlertEvent } from './transport/alertTransport';
+export { transportRouterService } from './transport/transportRouterService';
+export type {
+  AlertTransportAvailability,
+  AlertTransportEventMap,
+  MeshAlertLocation,
+  NearbyAlertEvent as MeshNearbyAlertEvent,
+  PublishResult,
+  PublishTriggerResult,
+  SOSAssignedPayload,
+  SOSCancelledPayload,
+  SOSTriggeredPayload,
+  TransportStatusSnapshot,
+} from './transport/alertTransport';
 export type {
   CountdownDurationSeconds,
   DetectionSensitivity,
+  MeshMode,
+  MeshRelayHops,
   SettingsChangedEvent,
   UserSettings,
 } from './settingsService';

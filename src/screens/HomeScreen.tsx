@@ -1,23 +1,22 @@
-import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
-import { useFocusEffect, useRouter } from 'expo-router';
+﻿import { useFocusEffect, useRouter } from 'expo-router';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { Alert, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusBadge } from '@/src/components/ui';
 import {
-  crashDetectionService,
-  emergencyControllerService,
-  hazardService,
-  locationService,
-  networkMeshService,
-  profileService,
-  responderService,
-  rideSessionService,
-  settingsService,
-  type HazardRecord,
-  type HazardType,
-  type NetworkMeshStatus,
-  type ResponderAlert,
-  type RideSession,
+    crashDetectionService,
+    emergencyControllerService,
+    hazardService,
+    locationService,
+    networkMeshService,
+    profileService,
+    responderService,
+    rideSessionService,
+    settingsService,
+    type HazardRecord,
+    type NetworkMeshStatus,
+    type ResponderAlert,
+    type RideSession
 } from '@/src/services';
 
 type Position = { latitude: number; longitude: number };
@@ -51,10 +50,7 @@ function loadMapModules(): MapModules {
 }
 
 function logHeatmapDebug(label: string, payload: Record<string, unknown>): void {
-  if (!__DEV__) {
-    return;
-  }
-  console.log(`[heatmap-debug] ${label}`, payload);
+  // Debug log disabled
 }
 
 export function HomeScreen() {
@@ -312,6 +308,9 @@ export function HomeScreen() {
   const networkVariant = useMemo(() => {
     if (networkStatus === 'INTERNET') {
       return 'internet' as const;
+    }
+    if (networkStatus === 'HYBRID') {
+      return 'hybrid' as const;
     }
     if (networkStatus === 'MESH_ONLY') {
       return 'mesh' as const;
@@ -603,14 +602,6 @@ export function HomeScreen() {
         </Pressable>
         <Pressable style={styles.linkButton} onPress={() => router.push('/sos-received')}>
           <Text style={styles.linkText}>SOS Received</Text>
-        </Pressable>
-      </View>
-      <View style={styles.linksRow}>
-        <Pressable style={styles.linkButton} onPress={() => router.push('/(tabs)/settings')}>
-          <Text style={styles.linkText}>Settings</Text>
-        </Pressable>
-        <Pressable style={styles.linkButton} onPress={() => router.push('/(tabs)/ride-history')}>
-          <Text style={styles.linkText}>Ride History</Text>
         </Pressable>
       </View>
     </Animated.ScrollView>

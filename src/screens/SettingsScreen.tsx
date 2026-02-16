@@ -6,11 +6,15 @@ import {
   settingsService,
   type CountdownDurationSeconds,
   type DetectionSensitivity,
+  type MeshMode,
+  type MeshRelayHops,
   type UserSettings,
 } from '@/src/services';
 
 const SENSITIVITY_OPTIONS: DetectionSensitivity[] = ['LOW', 'MEDIUM', 'HIGH'];
 const COUNTDOWN_OPTIONS: CountdownDurationSeconds[] = [3, 5, 10];
+const MESH_MODE_OPTIONS: MeshMode[] = ['AUTO', 'FORCE_MESH', 'FORCE_INTERNET'];
+const MESH_RELAY_OPTIONS: MeshRelayHops[] = [0, 1, 2, 3, 4];
 
 export function SettingsScreen() {
   const router = useRouter();
@@ -135,6 +139,55 @@ export function SettingsScreen() {
       </View>
 
       <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Mesh Connectivity</Text>
+        <Text style={styles.sectionHint}>Bluetooth mesh controls for SOS transport</Text>
+
+        <Text style={styles.fieldTitle}>Mesh Mode</Text>
+        <View style={styles.optionRow}>
+          {MESH_MODE_OPTIONS.map((option) => {
+            const selected = settings.meshMode === option;
+            return (
+              <Pressable
+                key={option}
+                disabled={isSaving}
+                style={[styles.optionButton, selected && styles.optionButtonSelected]}
+                onPress={() => {
+                  void onChange({ meshMode: option });
+                }}>
+                <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
+                  {option === 'AUTO'
+                    ? 'Auto'
+                    : option === 'FORCE_MESH'
+                      ? 'Mesh'
+                      : 'Internet'}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text style={styles.fieldTitle}>Relay Hops</Text>
+        <View style={styles.optionRow}>
+          {MESH_RELAY_OPTIONS.map((hops) => {
+            const selected = settings.meshRelayHops === hops;
+            return (
+              <Pressable
+                key={hops}
+                disabled={isSaving}
+                style={[styles.optionButton, selected && styles.optionButtonSelected]}
+                onPress={() => {
+                  void onChange({ meshRelayHops: hops });
+                }}>
+                <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
+                  {hops}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.fieldTitle}>Alarm Sound</Text>
         <View style={styles.toggleRow}>
           <View style={styles.toggleMeta}>
@@ -175,22 +228,6 @@ export function SettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>App Controls</Text>
         <Text style={styles.sectionHint}>Additional controls are available in upcoming blocks.</Text>
-        <View style={styles.placeholderRow}>
-          <Text style={styles.placeholderLabel}>Mesh Range Settings</Text>
-          <Text style={styles.comingSoon}>Coming soon</Text>
-        </View>
-        <View style={styles.placeholderRow}>
-          <Text style={styles.placeholderLabel}>Data Privacy Settings</Text>
-          <Text style={styles.comingSoon}>Coming soon</Text>
-        </View>
-        <View style={styles.placeholderRow}>
-          <Text style={styles.placeholderLabel}>Help & Support</Text>
-          <Text style={styles.comingSoon}>Coming soon</Text>
-        </View>
-        <View style={styles.placeholderRow}>
-          <Text style={styles.placeholderLabel}>Logout</Text>
-          <Text style={styles.comingSoon}>Coming soon</Text>
-        </View>
       </View>
 
       <Text style={styles.helperText}>{helperText}</Text>

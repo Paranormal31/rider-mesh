@@ -48,9 +48,7 @@ class RiderHeartbeatService {
           },
         }),
       });
-      if (__DEV__) {
-        console.log('[heartbeat] sent');
-      }
+
     } catch {
       if (__DEV__) {
         console.log('[heartbeat] failed');

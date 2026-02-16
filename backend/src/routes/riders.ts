@@ -102,13 +102,7 @@ export function createRidersRouter({ nowMs, upsertHeartbeat }: CreateRidersRoute
 
     try {
       await upsertHeartbeat(validation.value);
-      console.log('[heartbeat] received', {
-        requestId,
-        deviceId: validation.value.deviceId,
-        latitude: validation.value.latitude,
-        longitude: validation.value.longitude,
-        timestamp: validation.value.timestamp,
-      });
+
       response.status(200).json({
         requestId,
         data: {

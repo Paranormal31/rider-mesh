@@ -1,13 +1,11 @@
-import { alertAcceptApiUrl } from '@/src/config/api';
-
 import { deviceIdentityService } from './deviceIdentityService';
 import { profileService } from './profileService';
+import { transportRouterService } from './transport/transportRouterService';
 import {
-  socketService,
   type AlertAssignedEvent,
   type AlertCancelledEvent,
   type NearbyAlertEvent,
-} from './socketService';
+} from './transport/alertTransport';
 
 export type ResponderAlert = NearbyAlertEvent;
 
@@ -34,14 +32,14 @@ class ResponderService {
       return;
     }
 
-    await socketService.start();
-    this.offNearby = socketService.on('alert:new_nearby', (event) => {
+    await transportRouterService.start();
+    this.offNearby = transportRouterService.on('nearby_alert', (event) => {
       this.upsertAlert(event);
     });
-    this.offAssigned = socketService.on('alert:assigned', (event) => {
+    this.offAssigned = transportRouterService.on('assigned', (event) => {
       this.handleAssigned(event);
     });
-    this.offCancelled = socketService.on('alert:cancelled', (event) => {
+    this.offCancelled = transportRouterService.on('cancelled', (event) => {
       this.handleCancelled(event);
     });
     this.started = true;
@@ -78,15 +76,16 @@ class ResponderService {
         profileService.getProfile(),
       ]);
       const responderName = profile?.name?.trim() ? profile.name.trim() : null;
-      const response = await fetch(alertAcceptApiUrl(alertId), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          responderDeviceId,
-          responderName,
-        }),
+      const alert = this.alerts.find((item) => item.alertId === alertId);
+      if (!alert) {
+        return { ok: false, reason: 'Alert is no longer available.' };
+      }
+      const response = await transportRouterService.publishSosAssigned({
+        alertId,
+        victimDeviceId: alert.victimDeviceId,
+        responderDeviceId,
+        responderName,
+        assignedAt: Date.now(),
       });
 
       if (response.ok) {
@@ -97,18 +96,10 @@ class ResponderService {
         return { ok: true };
       }
 
-      if (response.status === 409) {
-        if (__DEV__) {
-          console.log('[responder] accept conflict', { alertId });
-        }
-        this.removeAlert(alertId);
-        return { ok: false, reason: 'Alert already assigned.' };
-      }
-
       if (__DEV__) {
-        console.log('[responder] accept failed', { alertId, status: response.status });
+        console.log('[responder] accept failed', { alertId });
       }
-      return { ok: false, reason: 'Accept request failed.' };
+      return { ok: false, reason: response.reason ?? 'Accept request failed.' };
     } catch {
       if (__DEV__) {
         console.log('[responder] accept network error', { alertId });

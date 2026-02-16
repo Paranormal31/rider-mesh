@@ -96,6 +96,9 @@ export function ActiveSosScreen() {
     if (networkStatus === 'INTERNET') {
       return 'internet' as const;
     }
+    if (networkStatus === 'HYBRID') {
+      return 'hybrid' as const;
+    }
     if (networkStatus === 'MESH_ONLY') {
       return 'mesh' as const;
     }

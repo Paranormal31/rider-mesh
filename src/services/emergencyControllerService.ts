@@ -1,12 +1,11 @@
-import { ALERTS_API_URL, buildAlertStatusApiUrl } from '@/src/config/api';
-
 import { alarmAudioService } from './alarmAudioService';
 import { crashDetectionService, type CrashDetectedEvent } from './crashDetectionService';
 import { deviceIdentityService } from './deviceIdentityService';
 import { locationService, type LocationPoint } from './locationService';
 import { profileService } from './profileService';
 import { settingsService, type UserSettings } from './settingsService';
-import { socketService, type AlertAssignedEvent } from './socketService';
+import { transportRouterService } from './transport/transportRouterService';
+import type { AlertAssignedEvent } from './transport/alertTransport';
 import type { ServiceHealth } from './types';
 
 type EmergencyControllerLocationPayload = {
@@ -139,8 +138,8 @@ class EmergencyControllerService {
     this.deviceId = await deviceIdentityService.getDeviceId();
     const profile = await profileService.getProfile();
     this.victimName = profile?.name?.trim() ? profile.name.trim() : null;
-    await socketService.start();
-    this.socketAssignedUnsubscribe = socketService.on('alert:assigned', (event) => {
+    await transportRouterService.start();
+    this.socketAssignedUnsubscribe = transportRouterService.on('assigned', (event) => {
       this.handleAlertAssigned(event);
     });
 
@@ -467,7 +466,12 @@ class EmergencyControllerService {
 
     this.statusUpdateInFlight = status;
     try {
-      await this.sendUpdateAlertStatusRequest(alertId, status);
+      if (status === 'CANCELLED') {
+        await transportRouterService.publishSosCancelled({
+          alertId,
+          cancelledAt: Date.now(),
+        });
+      }
     } finally {
       if (this.statusUpdateInFlight === status) {
         this.statusUpdateInFlight = null;
@@ -507,18 +511,18 @@ class EmergencyControllerService {
 
     const createPromise = (async () => {
       const deviceId = this.deviceId ?? (await deviceIdentityService.getDeviceId());
-      const payload = {
-        deviceId,
+      const nextAlertId = this.activeAlertId ?? createAlertId();
+      this.activeAlertId = nextAlertId;
+      const publishResult = await transportRouterService.publishSosTriggered({
+        alertId: nextAlertId,
+        victimDeviceId: deviceId,
         victimName: this.victimName,
-        status: 'TRIGGERED' as const,
         triggeredAt,
-        // Use immediately available payload to avoid blocking the countdown edge on GPS lookup.
         location: immediateLocation,
-      };
-
-      const response = await this.sendCreateAlertRequest(payload);
-      if (response?.id) {
-        this.activeAlertId = response.id;
+        maxHops: settingsService.getSettings().meshRelayHops,
+      });
+      if (publishResult.ok && publishResult.alertId.trim()) {
+        this.activeAlertId = publishResult.alertId.trim();
       }
     })();
 
@@ -558,150 +562,6 @@ class EmergencyControllerService {
       responderDeviceId: event.responderDeviceId,
       responderName: event.responderName?.trim() ? event.responderName : null,
       assignedAt: event.assignedAt,
-    });
-  }
-
-  private async buildAlertLocationPayload(): Promise<EmergencyControllerLocationPayload | null> {
-    const includeBreadcrumbs = settingsService.getSettings().breadcrumbTrackingEnabled;
-    const breadcrumbTrail = includeBreadcrumbs ? locationService.getBreadcrumbTrail(10) : [];
-
-    try {
-      const currentLocation = await locationService.getCurrentLocation();
-      return {
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
-        timestamp: currentLocation.timestamp,
-        breadcrumbTrail,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private async sendCreateAlertRequest(payload: {
-    deviceId: string;
-    victimName: string | null;
-    status: 'TRIGGERED';
-    triggeredAt: number;
-    location: {
-      latitude: number;
-      longitude: number;
-      timestamp: number;
-      breadcrumbTrail: LocationPoint[];
-    } | null;
-  }): Promise<{ id: string } | null> {
-    try {
-      const response = await fetch(ALERTS_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const body = (await response.json().catch(() => null)) as
-        | { data?: { id?: string } }
-        | null;
-
-      if (!response.ok) {
-        console.error('[alerts] Failed to send alert', {
-          url: ALERTS_API_URL,
-          status: response.status,
-          body,
-        });
-        return null;
-      }
-
-      console.log('[alerts] Alert sent successfully', body);
-      if (
-        body &&
-        typeof body === 'object' &&
-        typeof (body as { data?: { id?: unknown } }).data?.id === 'string'
-      ) {
-        return { id: (body as { data: { id: string } }).data.id };
-      }
-      return null;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error('[alerts] Network error while sending alert', {
-        url: ALERTS_API_URL,
-        reason,
-      });
-      return null;
-    }
-  }
-
-  private async sendUpdateAlertStatusRequest(
-    alertId: string,
-    status: 'CANCELLED' | 'ESCALATED'
-  ): Promise<void> {
-    const url = buildAlertStatusApiUrl(alertId);
-    try {
-      const response = await fetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status }),
-      });
-
-      const body = (await response.json().catch(() => null)) as unknown;
-
-      if (!response.ok) {
-        if (
-          status === 'CANCELLED' &&
-          response.status === 400 &&
-          this.isStaleEscalatedTransition(body)
-        ) {
-          console.warn('[alerts] Cancel skipped because alert was already escalated', {
-            url,
-            status: response.status,
-            body,
-            nextStatus: status,
-            alertId,
-          });
-          return;
-        }
-
-        console.error('[alerts] Failed to update alert status', {
-          url,
-          status: response.status,
-          body,
-          nextStatus: status,
-          alertId,
-        });
-        return;
-      }
-
-      console.log('[alerts] Alert status updated successfully', { alertId, nextStatus: status, body });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error('[alerts] Network error while updating alert status', {
-        url,
-        reason,
-        nextStatus: status,
-        alertId,
-      });
-    }
-  }
-
-  private isStaleEscalatedTransition(body: unknown): boolean {
-    if (!body || typeof body !== 'object') {
-      return false;
-    }
-
-    const maybeError = (body as { error?: { details?: { message?: unknown }[] } }).error;
-    const details = Array.isArray(maybeError?.details) ? maybeError.details : [];
-
-    return details.some((detail) => {
-      if (!detail || typeof detail !== 'object') {
-        return false;
-      }
-      const message = detail.message;
-      return (
-        typeof message === 'string' &&
-        message.includes('Cannot transition from ESCALATED to CANCELLED')
-      );
     });
   }
 
@@ -816,6 +676,10 @@ class EmergencyControllerService {
       listener(payload);
     }
   }
+}
+
+function createAlertId(): string {
+  return `mesh-alert-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export const emergencyControllerService = new EmergencyControllerService();

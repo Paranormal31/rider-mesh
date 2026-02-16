@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 const PERMISSIONS_STORAGE_KEY = '@dextrix/permissions-snapshot/v1';
 
@@ -40,7 +41,7 @@ class PermissionsService {
     next.location = await this.requestLocationBestEffort();
     next.notifications = await this.requestNotificationsBestEffort();
     next.motion = await this.requestMotionBestEffort();
-    next.bluetooth = 'unknown';
+    next.bluetooth = await this.requestBluetoothBestEffort();
     next.sms = 'unknown';
     next.updatedAt = Date.now();
 
@@ -82,6 +83,34 @@ class PermissionsService {
     try {
       const available = await Accelerometer.isAvailableAsync();
       return available ? 'granted' : 'unavailable';
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  private async requestBluetoothBestEffort(): Promise<PermissionStatus> {
+    if (Platform.OS !== 'android') {
+      return 'unavailable';
+    }
+
+    try {
+      if (Platform.Version >= 31) {
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+        ];
+        const result = await PermissionsAndroid.requestMultiple(permissions);
+        const allGranted = permissions.every(
+          (permission) => result[permission] === PermissionsAndroid.RESULTS.GRANTED
+        );
+        return allGranted ? 'granted' : 'denied';
+      }
+
+      const fallbackResult = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+      );
+      return fallbackResult === PermissionsAndroid.RESULTS.GRANTED ? 'granted' : 'denied';
     } catch {
       return 'unavailable';
     }

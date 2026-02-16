@@ -1,12 +1,14 @@
-import { useEffect } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { appRuntimeService } from '@/src/services';
+
+// Force reload for tab updates
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();

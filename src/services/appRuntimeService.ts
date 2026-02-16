@@ -1,6 +1,6 @@
 import { responderService } from './responderService';
 import { riderHeartbeatService } from './riderHeartbeatService';
-import { socketService } from './socketService';
+import { transportRouterService } from './transport/transportRouterService';
 
 class AppRuntimeService {
   private running = false;
@@ -10,7 +10,7 @@ class AppRuntimeService {
       return;
     }
 
-    await socketService.start();
+    await transportRouterService.start();
     await responderService.start();
     await riderHeartbeatService.start();
     this.running = true;
@@ -23,7 +23,7 @@ class AppRuntimeService {
 
     riderHeartbeatService.stop();
     responderService.stop();
-    socketService.stop();
+    transportRouterService.stop();
     this.running = false;
   }
 }

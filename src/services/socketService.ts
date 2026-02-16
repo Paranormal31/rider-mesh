@@ -85,6 +85,10 @@ class SocketService {
     this.started = false;
   }
 
+  isConnected(): boolean {
+    return this.socket?.connected ?? false;
+  }
+
   on<TEvent extends keyof SocketEventMap>(
     event: TEvent,
     listener: (payload: SocketEventMap[TEvent]) => void

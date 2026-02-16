@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type NetworkMeshStatus = 'INTERNET' | 'MESH_ONLY' | 'OFFLINE';
+type NetworkMeshStatus = 'INTERNET' | 'MESH_ONLY' | 'HYBRID' | 'OFFLINE';
 
 type NetworkMeshEventMap = {
   STATUS_CHANGED: { type: 'STATUS_CHANGED'; status: NetworkMeshStatus; changedAt: number };
@@ -28,7 +28,7 @@ class NetworkMeshService {
 
     try {
       const raw = await AsyncStorage.getItem(NETWORK_STATUS_KEY);
-      if (raw === 'INTERNET' || raw === 'MESH_ONLY' || raw === 'OFFLINE') {
+      if (raw === 'INTERNET' || raw === 'MESH_ONLY' || raw === 'HYBRID' || raw === 'OFFLINE') {
         this.status = raw;
       }
     } catch {

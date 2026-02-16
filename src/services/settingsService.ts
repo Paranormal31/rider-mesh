@@ -4,12 +4,16 @@ const SETTINGS_STORAGE_KEY = '@dextrix/user-settings/v1';
 
 type DetectionSensitivity = 'LOW' | 'MEDIUM' | 'HIGH';
 type CountdownDurationSeconds = 3 | 5 | 10;
+type MeshMode = 'AUTO' | 'FORCE_MESH' | 'FORCE_INTERNET';
+type MeshRelayHops = 0 | 1 | 2 | 3 | 4;
 
 type UserSettings = {
   sensitivity: DetectionSensitivity;
   countdownDurationSeconds: CountdownDurationSeconds;
   alarmSoundEnabled: boolean;
   breadcrumbTrackingEnabled: boolean;
+  meshMode: MeshMode;
+  meshRelayHops: MeshRelayHops;
 };
 
 type SettingsChangedEvent = {
@@ -31,6 +35,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   countdownDurationSeconds: 10,
   alarmSoundEnabled: true,
   breadcrumbTrackingEnabled: true,
+  meshMode: 'AUTO',
+  meshRelayHops: 2,
 };
 
 class SettingsService {
@@ -116,6 +122,12 @@ class SettingsService {
     ) {
       throw new Error('Invalid breadcrumb tracking setting.');
     }
+    if (patch.meshMode !== undefined && !isMeshMode(patch.meshMode)) {
+      throw new Error('Invalid mesh mode setting.');
+    }
+    if (patch.meshRelayHops !== undefined && !isMeshRelayHops(patch.meshRelayHops)) {
+      throw new Error('Invalid mesh relay hops setting.');
+    }
   }
 
   private normalizeStoredSettings(value: unknown): UserSettings {
@@ -139,6 +151,10 @@ class SettingsService {
         typeof candidate.breadcrumbTrackingEnabled === 'boolean'
           ? candidate.breadcrumbTrackingEnabled
           : DEFAULT_SETTINGS.breadcrumbTrackingEnabled,
+      meshMode: isMeshMode(candidate.meshMode) ? candidate.meshMode : DEFAULT_SETTINGS.meshMode,
+      meshRelayHops: isMeshRelayHops(candidate.meshRelayHops)
+        ? candidate.meshRelayHops
+        : DEFAULT_SETTINGS.meshRelayHops,
     };
   }
 
@@ -160,5 +176,20 @@ function isCountdownDuration(value: unknown): value is CountdownDurationSeconds 
   return value === 3 || value === 5 || value === 10;
 }
 
+function isMeshMode(value: unknown): value is MeshMode {
+  return value === 'AUTO' || value === 'FORCE_MESH' || value === 'FORCE_INTERNET';
+}
+
+function isMeshRelayHops(value: unknown): value is MeshRelayHops {
+  return value === 0 || value === 1 || value === 2 || value === 3 || value === 4;
+}
+
 export const settingsService = new SettingsService();
-export type { CountdownDurationSeconds, DetectionSensitivity, SettingsChangedEvent, UserSettings };
+export type {
+  CountdownDurationSeconds,
+  DetectionSensitivity,
+  MeshMode,
+  MeshRelayHops,
+  SettingsChangedEvent,
+  UserSettings,
+};
