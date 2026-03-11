@@ -54,6 +54,8 @@ class BluetoothAlertTransport implements AlertTransport {
       return;
     }
 
+
+
     this.deviceId = await deviceIdentityService.getDeviceId();
     const keyPair = await meshCryptoService.getOrCreateKeyPair();
     this.publicKey = keyPair.publicKey;
